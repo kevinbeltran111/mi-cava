@@ -61,3 +61,39 @@ create policy "ratings: cada uno edita su puntaje" on ratings
   for update using (auth.uid() = user_id);
 create policy "ratings: cada uno borra su puntaje" on ratings
   for delete using (auth.uid() = user_id);
+
+-- Las políticas de arriba solo controlan FILAS. Postgres además exige permisos
+-- a nivel de TABLA para los roles que usa la API (anon = sin login,
+-- authenticated = logueado). Sin esto, da "permission denied" aunque las
+-- políticas estén bien.
+grant usage on schema public to anon, authenticated;
+
+grant select on public.profiles to anon, authenticated;
+grant insert, update on public.profiles to authenticated;
+
+grant select on public.wines to anon, authenticated;
+grant insert, update, delete on public.wines to authenticated;
+
+grant select on public.ratings to anon, authenticated;
+grant insert, update, delete on public.ratings to authenticated;
+
+-- Permisos del bucket de fotos: cualquiera puede ver las fotos (bucket
+-- público), pero solo los logueados pueden subir/reemplazar/borrar.
+create policy "etiquetas: subir logueados" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'etiquetas');
+
+create policy "etiquetas: actualizar logueados" on storage.objects
+  for update to authenticated
+  using (bucket_id = 'etiquetas');
+
+create policy "etiquetas: borrar logueados" on storage.objects
+  for delete to authenticated
+  using (bucket_id = 'etiquetas');
+
+-- Al igual que con las tablas de arriba, storage.objects también necesita
+-- el permiso de tabla (no solo las políticas de seguridad) para que
+-- anon/authenticated puedan usarla.
+grant usage on schema storage to anon, authenticated;
+grant select on storage.objects to anon, authenticated;
+grant insert, update, delete on storage.objects to authenticated;

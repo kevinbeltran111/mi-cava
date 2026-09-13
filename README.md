@@ -25,7 +25,11 @@ Cómo queda repartido el acceso:
    → marcalo como **Public bucket** → Create.
 5. Andá a **Project Settings** → **API**. Ahí vas a ver:
    - **Project URL** → esto es tu `VITE_SUPABASE_URL`
-   - **anon public key** → esto es tu `VITE_SUPABASE_ANON_KEY`
+   - **anon public key** (o "publishable") → esto es tu `VITE_SUPABASE_ANON_KEY`
+   - **service_role key** (o "secret") → esto es tu `SUPABASE_SERVICE_ROLE_KEY`.
+     Es una clave con acceso total, sin restricciones — nunca la compartas ni
+     la pegues en ningún lugar público. Solo la usa la función del servidor
+     (`api/upload-photo.js`), nunca el navegador.
 
 ## 2) Configurar el login por link mágico
 
@@ -64,9 +68,11 @@ Cómo queda repartido el acceso:
    carpeta).
 2. Entrá a https://vercel.com, creá una cuenta (podés usar la de GitHub).
 3. "Add New" → "Project" → elegí el repositorio de Mi Cava.
-4. Antes de tocar "Deploy", abrí "Environment Variables" y cargá:
-   - `VITE_SUPABASE_URL` = el Project URL de Supabase
-   - `VITE_SUPABASE_ANON_KEY` = el anon public key de Supabase
+4. Antes de tocar "Deploy", abrí "Environment Variables" y cargá las tres:
+   - `VITE_SUPABASE_URL` = el Project URL de Supabase (tipo "Config")
+   - `VITE_SUPABASE_ANON_KEY` = el anon/publishable key de Supabase (tipo "Config")
+   - `SUPABASE_SERVICE_ROLE_KEY` = el service_role/secret key de Supabase
+     (tipo **"Secret"**, no "Config" — esta sí tiene que quedar oculta)
 5. Tocá **Deploy**. En un minuto te da un link propio (algo como
    `mi-cava.vercel.app`).
 6. Volvé a Supabase → **Authentication** → **URL Configuration** y agregá esa

@@ -144,6 +144,15 @@ const inputStyle = {
   outline: "none",
 };
 
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 function avgOf(ratings) {
   const values = Object.values(ratings || {}).map((r) => r.valor);
   if (values.length === 0) return null;
@@ -557,11 +566,15 @@ export default function App() {
     try {
       let foto_url = draft.foto && draft.foto.startsWith("http") ? draft.foto : null;
       if (photoBlob) {
-        const path = `${draft.id}.jpg`;
-        const { error: upErr } = await supabase.storage.from(PHOTOS_BUCKET).upload(path, photoBlob, { upsert: true, contentType: "image/jpeg" });
-        if (upErr) throw upErr;
-        const { data: pub } = supabase.storage.from(PHOTOS_BUCKET).getPublicUrl(path);
-        foto_url = pub.publicUrl;
+        const base64 = await blobToBase64(photoBlob);
+        const resp = await fetch("/api/upload-photo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ wineId: draft.id, imageBase64: base64 }),
+        });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.error || "No se pudo subir la foto");
+        foto_url = result.url;
       }
       const payload = {
         id: draft.id,
@@ -603,13 +616,16 @@ export default function App() {
 
   const handleDelete = async (id) => {
     try {
-      await supabase.from("wines").delete().eq("id", id);
-      await supabase.storage.from(PHOTOS_BUCKET).remove([`${id}.jpg`]);
+      const { error } = await supabase.from("wines").delete().eq("id", id);
+      if (error) throw error;
       await loadWines();
     } catch (err) {
       console.error(err);
       setSaveError(true);
     }
+    // Borrar la foto del bucket es solo prolijidad — si falla, no importa,
+    // el vino ya se borró igual.
+    supabase.storage.from(PHOTOS_BUCKET).remove([`${id}.jpg`]).catch(() => {});
     setShowForm(false);
     setEditing(null);
   };
