@@ -667,7 +667,7 @@ export default function App() {
                   </button>
                 </>
               ) : (
-                "Viendo la cava · solo lectura"
+                "Viendo la cava"
               )}
             </p>
           </div>
