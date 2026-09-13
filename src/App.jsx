@@ -171,7 +171,7 @@ function LoginModal({ onClose }) {
     setError(null);
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim(),
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: window.location.origin, shouldCreateUser: false },
     });
     setSending(false);
     if (error) {
