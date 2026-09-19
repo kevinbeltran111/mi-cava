@@ -12,6 +12,7 @@ import {
   LogIn,
   LogOut,
   Mail,
+  Shield,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -256,9 +257,9 @@ function ProfileSetup({ onSubmit }) {
 }
 
 // ---------- Wine form/detail modal ----------
-function WineModal({ wine, myUserId, myName, onSave, onDelete, onRate, onCancel }) {
+function WineModal({ wine, myUserId, myName, canEdit, onSave, onDelete, onRate, onCancel }) {
   const isNew = !wine;
-  const isAuthor = isNew || wine.userId === myUserId;
+  const isAuthor = isNew || (wine.userId === myUserId && canEdit);
   const [draft, setDraft] = useState(
     wine
       ? { ...wine }
@@ -425,6 +426,140 @@ function WineModal({ wine, myUserId, myName, onSave, onDelete, onRate, onCancel 
   );
 }
 
+// ---------- Confirmación genérica ----------
+function ConfirmDialog({ message, onConfirm, onCancel }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 70 }} onClick={onCancel}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: CARD_BG, borderRadius: 14, padding: 24, maxWidth: 360, width: "100%", boxShadow: "0 20px 60px rgba(43,33,28,0.35)" }}>
+        <p style={{ color: INK, fontSize: 14.5, lineHeight: 1.6, margin: "0 0 20px" }}>{message}</p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button onClick={onCancel} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 14 }}>
+            Cancelar
+          </button>
+          <button onClick={onConfirm} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: "pointer", fontSize: 14, fontWeight: 600 }}>
+            Confirmar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const ROLE_LABEL = { admin: "Admin", editor: "Editor", viewer: "Viewer" };
+
+// ---------- Panel de administración (solo ADMIN) ----------
+function AdminPanel({ myUserId, onClose }) {
+  const [users, setUsers] = useState(null);
+  const [error, setError] = useState(null);
+  const [pendingChange, setPendingChange] = useState(null); // { id, nombre, from, to }
+  const [saving, setSaving] = useState(false);
+
+  const loadUsers = async () => {
+    setError(null);
+    const { data, error } = await supabase.rpc("admin_list_users");
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    setUsers(data || []);
+  };
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  const applyChange = async () => {
+    if (!pendingChange) return;
+    setSaving(true);
+    const { error } = await supabase.rpc("admin_set_role", {
+      target_id: pendingChange.id,
+      new_role: pendingChange.to,
+    });
+    setSaving(false);
+    setPendingChange(null);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    await loadUsers();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 60 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: CARD_BG, borderRadius: 14, width: "100%", maxWidth: 560, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(43,33,28,0.35)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 20px", borderBottom: `1px solid ${BORDER}` }}>
+          <h2 style={{ margin: 0, fontFamily: SERIF, fontSize: 22, color: BORDEAUX, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+            <Shield size={19} /> Administración
+          </h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: MUTED, padding: 4 }} aria-label="Cerrar">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div style={{ padding: 20 }}>
+          <h3 style={{ fontFamily: SERIF, fontSize: 16, color: INK, margin: "0 0 12px" }}>Usuarios</h3>
+
+          {error && (
+            <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+              {error}
+            </div>
+          )}
+
+          {users === null ? (
+            <div style={{ display: "flex", justifyContent: "center", padding: "30px 0", color: MUTED }}>
+              <Loader2 size={22} style={{ animation: "spin 0.8s linear infinite" }} />
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {users.map((u) => (
+                <div
+                  key={u.id}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", border: `1px solid ${BORDER}`, borderRadius: 10, background: "#FFFDFA" }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14.5, color: INK, fontWeight: 600 }}>
+                      {u.nombre} {u.id === myUserId && <span style={{ color: MUTED, fontWeight: 400 }}>(vos)</span>}
+                    </div>
+                    <div style={{ fontSize: 12.5, color: MUTED, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email}</div>
+                  </div>
+                  <select
+                    value={u.role}
+                    disabled={u.id === myUserId}
+                    onChange={(e) => setPendingChange({ id: u.id, nombre: u.nombre, from: u.role, to: e.target.value })}
+                    style={{ ...inputStyle, width: "auto", padding: "7px 10px", fontSize: 13.5, cursor: u.id === myUserId ? "not-allowed" : "pointer", opacity: u.id === myUserId ? 0.6 : 1 }}
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="editor">Editor</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p style={{ color: MUTED, fontSize: 12.5, marginTop: 14 }}>
+            No podés cambiar tu propio rol — pedile a otro administrador que lo haga.
+          </p>
+        </div>
+      </div>
+
+      {pendingChange && (
+        <ConfirmDialog
+          message={`¿Confirmás cambiar a ${pendingChange.nombre} de ${ROLE_LABEL[pendingChange.from]} a ${ROLE_LABEL[pendingChange.to]}?`}
+          onConfirm={applyChange}
+          onCancel={() => setPendingChange(null)}
+        />
+      )}
+      {saving && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.3)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80 }}>
+          <Loader2 size={26} color="#fff" style={{ animation: "spin 0.8s linear infinite" }} />
+        </div>
+      )}
+      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+    </div>
+  );
+}
+
 function WineCard({ wine, onClick, clickable }) {
   const avg = avgOf(wine.ratings);
   const count = Object.keys(wine.ratings || {}).length;
@@ -492,6 +627,7 @@ export default function App() {
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -646,7 +782,10 @@ export default function App() {
     }
   });
 
-  const isEditor = Boolean(session && profile);
+  const role = profile?.role || "editor";
+  const hasProfile = Boolean(session && profile);
+  const canEdit = hasProfile && (role === "admin" || role === "editor");
+  const isAdmin = hasProfile && role === "admin";
 
   if (session && profile === null) {
     return <ProfileSetup onSubmit={handleCreateProfile} />;
@@ -659,7 +798,7 @@ export default function App() {
           <div>
             <h1 style={{ margin: 0, fontFamily: SERIF, fontSize: 32, color: CREAM, fontWeight: 700, borderBottom: `2px solid ${GOLD}`, display: "inline-block", paddingBottom: 4 }}>Mi Cava</h1>
             <p style={{ margin: "8px 0 0", color: GOLD_SOFT, fontSize: 13.5 }}>
-              {isEditor ? (
+              {hasProfile ? (
                 <>
                   Entraste como <strong>{profile.nombre}</strong> ·{" "}
                   <button onClick={() => supabase.auth.signOut()} style={{ background: "none", border: "none", color: GOLD_SOFT, textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 13.5 }}>
@@ -671,21 +810,31 @@ export default function App() {
               )}
             </p>
           </div>
-          {isEditor ? (
-            <button
-              onClick={() => { setEditing(null); setShowForm(true); }}
-              style={{ display: "flex", alignItems: "center", gap: 8, background: GOLD, color: BORDEAUX_DARK, border: "none", borderRadius: 8, padding: "12px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}
-            >
-              <Plus size={17} /> Agregar vino
-            </button>
-          ) : (
-            <button
-              onClick={() => setShowLogin(true)}
-              style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", color: GOLD_SOFT, border: `1px solid ${GOLD_SOFT}`, borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}
-            >
-              <LogIn size={15} /> Iniciar sesión
-            </button>
-          )}
+          <div style={{ display: "flex", gap: 10 }}>
+            {isAdmin && (
+              <button
+                onClick={() => setShowAdmin(true)}
+                style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", color: GOLD_SOFT, border: `1px solid ${GOLD_SOFT}`, borderRadius: 8, padding: "12px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}
+              >
+                <Shield size={15} /> Administración
+              </button>
+            )}
+            {canEdit ? (
+              <button
+                onClick={() => { setEditing(null); setShowForm(true); }}
+                style={{ display: "flex", alignItems: "center", gap: 8, background: GOLD, color: BORDEAUX_DARK, border: "none", borderRadius: 8, padding: "12px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}
+              >
+                <Plus size={17} /> Agregar vino
+              </button>
+            ) : !hasProfile ? (
+              <button
+                onClick={() => setShowLogin(true)}
+                style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", color: GOLD_SOFT, border: `1px solid ${GOLD_SOFT}`, borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}
+              >
+                <LogIn size={15} /> Iniciar sesión
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -721,8 +870,8 @@ export default function App() {
         ) : wines.length === 0 ? (
           <div style={{ textAlign: "center", padding: "70px 20px", border: `1px dashed ${BORDER}`, borderRadius: 12, background: CARD_BG }}>
             <Wine size={38} color={GOLD} strokeWidth={1.2} style={{ marginBottom: 14 }} />
-            <h3 style={{ fontFamily: SERIF, fontSize: 20, margin: "0 0 6px", color: BORDEAUX }}>{isEditor ? "Empiecen la cava" : "Todavía no hay vinos cargados"}</h3>
-            {isEditor ? (
+            <h3 style={{ fontFamily: SERIF, fontSize: 20, margin: "0 0 6px", color: BORDEAUX }}>{canEdit ? "Empiecen la cava" : "Todavía no hay vinos cargados"}</h3>
+            {canEdit ? (
               <>
                 <p style={{ color: MUTED, fontSize: 14, margin: "0 0 20px" }}>Sé el primero en cargar un vino para que los demás lo puntúen.</p>
                 <button
@@ -744,7 +893,7 @@ export default function App() {
               <WineCard
                 key={wine.id}
                 wine={wine}
-                clickable={isEditor}
+                clickable={hasProfile}
                 onClick={() => { setEditing(wine); setShowForm(true); }}
               />
             ))}
@@ -752,17 +901,20 @@ export default function App() {
         )}
       </div>
 
-      {showForm && isEditor && (
+      {showForm && hasProfile && (
         <WineModal
           wine={editing}
           myUserId={session.user.id}
           myName={profile.nombre}
+          canEdit={canEdit}
           onSave={handleSave}
           onDelete={handleDelete}
           onRate={handleRate}
           onCancel={() => { setShowForm(false); setEditing(null); }}
         />
       )}
+
+      {showAdmin && isAdmin && <AdminPanel myUserId={session.user.id} onClose={() => setShowAdmin(false)} />}
 
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
     </div>

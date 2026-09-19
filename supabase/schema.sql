@@ -97,3 +97,11 @@ create policy "etiquetas: borrar logueados" on storage.objects
 grant usage on schema storage to anon, authenticated;
 grant select on storage.objects to anon, authenticated;
 grant insert, update, delete on storage.objects to authenticated;
+
+-- ============================================================
+-- SISTEMA DE ROLES (admin / editor / viewer)
+-- Agregado posteriormente. El detalle completo, con comentarios,
+-- está en supabase/migration_roles.sql — ese es el que se corre
+-- sobre la base ya existente. Este bloque queda acá solo para que
+-- schema.sql refleje el estado final del proyecto.
+-- ============================================================

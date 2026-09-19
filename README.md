@@ -20,7 +20,10 @@ Cómo queda repartido el acceso:
 3. Cuando el proyecto termine de crearse, andá a **SQL Editor** → **New
    query**, pegá todo el contenido de `supabase/schema.sql` (de esta carpeta)
    y tocá **Run**. Esto crea las tablas `profiles`, `wines` y `ratings`, y
-   los permisos (solo invitados escriben, cualquiera lee).
+   los permisos (solo invitados escriben, cualquiera lee). Si el proyecto es
+   nuevo, después corré también `supabase/migration_roles.sql` para sumar el
+   sistema de roles (admin/editor/viewer) — ver la sección "Roles y
+   administración" más abajo.
 4. Andá a **Storage** → **Create a new bucket** → nombre exacto: `etiquetas`
    → marcalo como **Public bucket** → Create.
 5. Andá a **Project Settings** → **API**. Ahí vas a ver:
@@ -98,3 +101,36 @@ nueva).
 - Alguien que no invitaste intenta entrar: no va a poder — el link mágico
   solo funciona para mails que vos invitaste explícitamente en Authentication
   → Users.
+
+## Roles y administración
+
+Desde que se agregó el sistema de roles, cada usuario tiene uno de estos tres:
+
+- **admin** — todo lo de editor, más: ver la lista de usuarios, cambiar
+  roles, asignar o quitar el rol admin a otros. Puede haber varios admin al
+  mismo tiempo.
+- **editor** — puede cargar, editar y borrar sus propios vinos, y puntuar
+  cualquier vino. Es el rol por defecto para todo usuario nuevo.
+- **viewer** — puede ver la cava, buscar, abrir vinos y puntuarlos, pero no
+  puede crear, editar ni borrar vinos.
+
+### Aplicar el sistema de roles (una sola vez)
+
+1. En Supabase → SQL Editor → New query, pegá todo el contenido de
+   `supabase/migration_roles.sql` y tocá Run.
+2. Dentro de ese mismo archivo hay una línea comentada (empieza con `--
+   update profiles set role = 'admin'...`) — copiala aparte, sacale los dos
+   guiones del principio, reemplazá el mail de ejemplo por el tuyo, y
+   ejecutala en una query nueva. Así quedás como el primer administrador.
+3. Subí el código actualizado a GitHub como siempre — no hace falta ninguna
+   variable de entorno nueva para esto.
+
+### Usar el panel de administración
+
+Con el rol admin, va a aparecer un botón "Administración" en el encabezado.
+Ahí ves nombre, mail y rol de cada usuario, y podés cambiarlo con el
+selector — te pide confirmación antes de aplicar el cambio. Siempre tiene
+que quedar al menos un admin: si intentás bajar al último, la base de datos
+lo va a rechazar. Tampoco podés cambiar tu propio rol — necesitás que otro
+admin lo haga (o, si sos el único, promover primero a alguien más antes de
+bajarte vos).
