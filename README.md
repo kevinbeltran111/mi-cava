@@ -132,3 +132,13 @@ vino, esa misma foto pasa a ser la foto guardada del vino (no se sube dos
 veces ni se guarda nada intermedio).
 Cada clic en "Analizar" es una sola llamada a la IA — no hay reintentos
 automáticos ni procesamiento en segundo plano.
+Búsqueda y filtros
+La búsqueda de texto ahora también encuentra coincidencias por región, lugar
+y añada (antes solo nombre/bodega/varietal). Al lado hay un botón "Filtros"
+que despliega un panel con seis filtros combinables: región, lugar, bodega,
+varietal, añada y stock (todos / con stock / sin stock) — todos se pueden
+usar juntos. Las opciones de cada filtro se arman solas a partir de los
+vinos ya cargados (si nadie cargó todavía un vino de "Cafayate", esa opción
+no aparece hasta que exista uno). Se muestra la cantidad de resultados y un
+botón para limpiar todo. No se agregó ninguna tabla ni columna nueva —
+todo se calcula a partir de los datos que ya existen.
