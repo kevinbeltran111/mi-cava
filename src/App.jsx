@@ -13,6 +13,8 @@ import {
   LogOut,
   Mail,
   Shield,
+  MapPin,
+  Package,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -267,7 +269,7 @@ function WineModal({ wine, myUserId, myName, canEdit, onSave, onDelete, onRate, 
   const [draft, setDraft] = useState(
     wine
       ? { ...wine }
-      : { id: uid(), nombre: "", bodega: "", varietal: "", anada: "", precio: "", maridaje: "", foto: null, userId: myUserId }
+      : { id: uid(), nombre: "", bodega: "", varietal: "", anada: "", precio: "", maridaje: "", region: "", lugar: "", stock: 1, foto: null, userId: myUserId }
   );
   const [photoBlob, setPhotoBlob] = useState(null);
   const [myRating, setMyRating] = useState(wine?.ratings?.[myUserId]?.valor || 0);
@@ -276,6 +278,7 @@ function WineModal({ wine, myUserId, myName, canEdit, onSave, onDelete, onRate, 
   const fileInputRef = useRef(null);
 
   const update = (key, val) => setDraft((w) => ({ ...w, [key]: val }));
+  const setStock = (val) => setDraft((w) => ({ ...w, stock: Math.max(0, Math.round(Number(val) || 0)) }));
 
   const handlePhoto = async (e) => {
     const file = e.target.files?.[0];
@@ -371,6 +374,44 @@ function WineModal({ wine, myUserId, myName, canEdit, onSave, onDelete, onRate, 
               <Field label="Maridaje sugerido">
                 <input style={inputStyle} value={draft.maridaje} onChange={(e) => update("maridaje", e.target.value)} placeholder="Ej: Carnes rojas, quesos curados" />
               </Field>
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <Field label="Región">
+                    <input style={inputStyle} value={draft.region || ""} onChange={(e) => update("region", e.target.value)} placeholder="Ej: Valle de Uco" />
+                  </Field>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Field label="Lugar / localidad">
+                    <input style={inputStyle} value={draft.lugar || ""} onChange={(e) => update("lugar", e.target.value)} placeholder="Ej: Gualtallary" />
+                  </Field>
+                </div>
+              </div>
+              <Field label="Stock (botellas)">
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => setStock((draft.stock ?? 0) - 1)}
+                    style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, fontSize: 18, cursor: "pointer", flexShrink: 0 }}
+                  >
+                    −
+                  </button>
+                  <input
+                    style={{ ...inputStyle, textAlign: "center" }}
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={draft.stock ?? 0}
+                    onChange={(e) => setStock(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setStock((draft.stock ?? 0) + 1)}
+                    style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, fontSize: 18, cursor: "pointer", flexShrink: 0 }}
+                  >
+                    +
+                  </button>
+                </div>
+              </Field>
             </>
           ) : (
             <div style={{ marginBottom: 18, fontSize: 14, color: INK, lineHeight: 1.9 }}>
@@ -379,6 +420,8 @@ function WineModal({ wine, myUserId, myName, canEdit, onSave, onDelete, onRate, 
               <div><strong>Añada:</strong> {draft.anada || "—"}</div>
               <div><strong>Precio:</strong> {draft.precio ? `$${Number(draft.precio).toLocaleString("es-AR")}` : "—"}</div>
               <div><strong>Maridaje:</strong> {draft.maridaje || "—"}</div>
+              <div><strong>Región / lugar:</strong> {[draft.region, draft.lugar].filter(Boolean).join(" · ") || "—"}</div>
+              <div><strong>Stock:</strong> {draft.stock ?? 0} botella{(draft.stock ?? 0) === 1 ? "" : "s"}</div>
             </div>
           )}
 
@@ -583,8 +626,26 @@ function WineCard({ wine, onClick, clickable }) {
       }}
     >
       <div style={{ padding: "16px 16px 0" }}>
-        <div style={{ width: "62%", margin: "0 auto", aspectRatio: "4 / 5", borderRadius: 8, overflow: "hidden", border: `1px solid ${BORDER}`, boxShadow: "0 3px 10px rgba(74,20,32,0.08)" }}>
+        <div style={{ width: "62%", margin: "0 auto", aspectRatio: "4 / 5", borderRadius: 8, overflow: "hidden", border: `1px solid ${BORDER}`, boxShadow: "0 3px 10px rgba(74,20,32,0.08)", position: "relative" }}>
           {wine.foto ? <img src={wine.foto} alt={wine.nombre} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <BottlePlaceholder />}
+          {(() => {
+            const stock = wine.stock ?? 0;
+            if (stock === 0) {
+              return (
+                <span style={{ position: "absolute", top: 6, right: 6, background: DANGER, color: "#fff", fontSize: 10.5, fontWeight: 700, padding: "3px 7px", borderRadius: 999 }}>
+                  Sin stock
+                </span>
+              );
+            }
+            if (stock <= 2) {
+              return (
+                <span style={{ position: "absolute", top: 6, right: 6, background: GOLD, color: BORDEAUX_DARK, fontSize: 10.5, fontWeight: 700, padding: "3px 7px", borderRadius: 999 }}>
+                  Quedan {stock}
+                </span>
+              );
+            }
+            return null;
+          })()}
         </div>
       </div>
       <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
@@ -594,6 +655,12 @@ function WineCard({ wine, onClick, clickable }) {
             {[wine.bodega, wine.varietal].filter(Boolean).join(" · ") || "Sin datos de bodega"}
             {wine.anada ? ` · ${wine.anada}` : ""}
           </p>
+          {(wine.region || wine.lugar) && (
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: MUTED, display: "flex", alignItems: "center", gap: 4 }}>
+              <MapPin size={11} />
+              {[wine.region, wine.lugar].filter(Boolean).join(" · ")}
+            </p>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: MUTED }}>
           <User size={12} />
@@ -611,9 +678,16 @@ function WineCard({ wine, onClick, clickable }) {
             <StarRating value={avg || 0} onChange={() => {}} size={15} readOnly />
             {count > 0 && <span style={{ fontSize: 11.5, color: MUTED }}>({count})</span>}
           </div>
-          {wine.precio != null && wine.precio !== "" && (
-            <span style={{ fontFamily: SERIF, fontSize: 14, color: GOLD, fontWeight: 700 }}>${Number(wine.precio).toLocaleString("es-AR")}</span>
-          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {(wine.stock ?? 0) > 2 && (
+              <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11.5, color: MUTED }}>
+                <Package size={12} /> {wine.stock}
+              </span>
+            )}
+            {wine.precio != null && wine.precio !== "" && (
+              <span style={{ fontFamily: SERIF, fontSize: 14, color: GOLD, fontWeight: 700 }}>${Number(wine.precio).toLocaleString("es-AR")}</span>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -685,6 +759,9 @@ export default function App() {
         anada: w.anada,
         precio: w.precio,
         maridaje: w.maridaje,
+        region: w.region,
+        lugar: w.lugar,
+        stock: w.stock ?? 0,
         foto: w.foto_url,
         userId: w.user_id,
         autorNombre: w.profiles?.nombre || "—",
@@ -724,6 +801,9 @@ export default function App() {
         anada: draft.anada ? Number(draft.anada) : null,
         precio: draft.precio ? Number(draft.precio) : null,
         maridaje: draft.maridaje || null,
+        region: draft.region || null,
+        lugar: draft.lugar || null,
+        stock: Math.max(0, Math.round(Number(draft.stock) || 0)),
         foto_url,
         user_id: draft.userId,
       };
