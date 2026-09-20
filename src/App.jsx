@@ -15,6 +15,7 @@ import {
   Shield,
   MapPin,
   Package,
+  SlidersHorizontal,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -844,6 +845,13 @@ export default function App() {
   const [saveError, setSaveError] = useState(false);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("reciente");
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterRegion, setFilterRegion] = useState("");
+  const [filterLugar, setFilterLugar] = useState("");
+  const [filterBodega, setFilterBodega] = useState("");
+  const [filterVarietal, setFilterVarietal] = useState("");
+  const [filterAnada, setFilterAnada] = useState("");
+  const [filterStock, setFilterStock] = useState("todos");
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -992,16 +1000,66 @@ export default function App() {
     setEditing(null);
   };
 
+  const uniqueValues = (key) =>
+    Array.from(new Set(wines.map((w) => w[key]).filter((v) => v != null && String(v).trim() !== ""))).sort((a, b) =>
+      String(a).localeCompare(String(b))
+    );
+
+  const regionOptions = uniqueValues("region");
+  const lugarOptions = uniqueValues("lugar");
+  const bodegaOptions = uniqueValues("bodega");
+  const varietalOptions = uniqueValues("varietal");
+  const anadaOptions = Array.from(new Set(wines.map((w) => w.anada).filter((v) => v != null && String(v).trim() !== "")))
+    .sort((a, b) => Number(b) - Number(a));
+
+  const hasActiveFilters =
+    search.trim() !== "" ||
+    filterRegion !== "" ||
+    filterLugar !== "" ||
+    filterBodega !== "" ||
+    filterVarietal !== "" ||
+    filterAnada !== "" ||
+    filterStock !== "todos";
+
+  const clearFilters = () => {
+    setSearch("");
+    setFilterRegion("");
+    setFilterLugar("");
+    setFilterBodega("");
+    setFilterVarietal("");
+    setFilterAnada("");
+    setFilterStock("todos");
+  };
+
   const filtered = wines.filter((w) => {
-    const q = search.toLowerCase();
-    return w.nombre.toLowerCase().includes(q) || (w.bodega || "").toLowerCase().includes(q) || (w.varietal || "").toLowerCase().includes(q);
+    const q = search.trim().toLowerCase();
+    const matchesSearch =
+      q === "" ||
+      w.nombre.toLowerCase().includes(q) ||
+      (w.bodega || "").toLowerCase().includes(q) ||
+      (w.varietal || "").toLowerCase().includes(q) ||
+      (w.region || "").toLowerCase().includes(q) ||
+      (w.lugar || "").toLowerCase().includes(q) ||
+      String(w.anada || "").toLowerCase().includes(q);
+
+    const matchesRegion = !filterRegion || w.region === filterRegion;
+    const matchesLugar = !filterLugar || w.lugar === filterLugar;
+    const matchesBodega = !filterBodega || w.bodega === filterBodega;
+    const matchesVarietal = !filterVarietal || w.varietal === filterVarietal;
+    const matchesAnada = !filterAnada || String(w.anada) === String(filterAnada);
+    const stock = w.stock ?? 0;
+    const matchesStock = filterStock === "todos" || (filterStock === "con" ? stock > 0 : stock === 0);
+
+    return matchesSearch && matchesRegion && matchesLugar && matchesBodega && matchesVarietal && matchesAnada && matchesStock;
   });
 
   const sorted = [...filtered].sort((a, b) => {
     switch (sortBy) {
       case "nombre": return a.nombre.localeCompare(b.nombre);
+      case "nombre-desc": return b.nombre.localeCompare(a.nombre);
       case "precio-desc": return (Number(b.precio) || 0) - (Number(a.precio) || 0);
       case "precio-asc": return (Number(a.precio) || 0) - (Number(b.precio) || 0);
+      case "stock-desc": return (Number(b.stock) || 0) - (Number(a.stock) || 0);
       case "rating-desc": return (avgOf(b.ratings) || 0) - (avgOf(a.ratings) || 0);
       case "anada-desc": return (Number(b.anada) || 0) - (Number(a.anada) || 0);
       default: return new Date(b.fechaAgregado) - new Date(a.fechaAgregado);
@@ -1066,19 +1124,78 @@ export default function App() {
 
       <div style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 24px 60px" }}>
         {wines.length > 0 && (
-          <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
-            <div style={{ position: "relative", flex: "1 1 240px" }}>
-              <Search size={16} color={MUTED} style={{ position: "absolute", left: 12, top: 12 }} />
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nombre, bodega o varietal..." style={{ ...inputStyle, paddingLeft: 36 }} />
+          <div style={{ marginBottom: 22 }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ position: "relative", flex: "1 1 240px" }}>
+                <Search size={16} color={MUTED} style={{ position: "absolute", left: 12, top: 12 }} />
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nombre, bodega, varietal, región, lugar o añada..." style={{ ...inputStyle, paddingLeft: 36 }} />
+              </div>
+              <button
+                onClick={() => setShowFilters((v) => !v)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 7, padding: "10px 14px", borderRadius: 8,
+                  border: `1px solid ${showFilters || hasActiveFilters ? GOLD : BORDER}`,
+                  background: showFilters || hasActiveFilters ? CREAM : "#FFFDFA",
+                  color: INK, fontSize: 14, cursor: "pointer", whiteSpace: "nowrap",
+                }}
+              >
+                <SlidersHorizontal size={15} /> Filtros
+                {hasActiveFilters && (
+                  <span style={{ background: GOLD, color: BORDEAUX_DARK, borderRadius: 999, fontSize: 11, fontWeight: 700, padding: "1px 6px" }}>●</span>
+                )}
+              </button>
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer" }}>
+                <option value="reciente">Más recientes</option>
+                <option value="nombre">Nombre (A-Z)</option>
+                <option value="nombre-desc">Nombre (Z-A)</option>
+                <option value="rating-desc">Mejor puntuados</option>
+                <option value="precio-desc">Precio: mayor a menor</option>
+                <option value="precio-asc">Precio: menor a mayor</option>
+                <option value="stock-desc">Stock: mayor a menor</option>
+                <option value="anada-desc">Añada más nueva</option>
+              </select>
             </div>
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ ...inputStyle, width: "auto", cursor: "pointer" }}>
-              <option value="reciente">Más recientes</option>
-              <option value="nombre">Nombre (A-Z)</option>
-              <option value="rating-desc">Mejor puntuados</option>
-              <option value="precio-desc">Precio: mayor a menor</option>
-              <option value="precio-asc">Precio: menor a mayor</option>
-              <option value="anada-desc">Añada más nueva</option>
-            </select>
+
+            {showFilters && (
+              <div style={{ marginTop: 12, padding: 14, border: `1px solid ${BORDER}`, borderRadius: 10, background: CARD_BG, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
+                <select value={filterRegion} onChange={(e) => setFilterRegion(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+                  <option value="">Región: todas</option>
+                  {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+                <select value={filterLugar} onChange={(e) => setFilterLugar(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+                  <option value="">Lugar: todos</option>
+                  {lugarOptions.map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
+                <select value={filterBodega} onChange={(e) => setFilterBodega(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+                  <option value="">Bodega: todas</option>
+                  {bodegaOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+                <select value={filterVarietal} onChange={(e) => setFilterVarietal(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+                  <option value="">Varietal: todos</option>
+                  {varietalOptions.map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+                <select value={filterAnada} onChange={(e) => setFilterAnada(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+                  <option value="">Añada: todas</option>
+                  {anadaOptions.map((a) => <option key={a} value={a}>{a}</option>)}
+                </select>
+                <select value={filterStock} onChange={(e) => setFilterStock(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+                  <option value="todos">Stock: todos</option>
+                  <option value="con">Con stock</option>
+                  <option value="sin">Sin stock</option>
+                </select>
+              </div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
+              <span style={{ fontSize: 12.5, color: MUTED }}>
+                {sorted.length} {sorted.length === 1 ? "vino" : "vinos"}
+              </span>
+              {hasActiveFilters && (
+                <button onClick={clearFilters} style={{ background: "none", border: "none", color: MUTED, textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: 0 }}>
+                  Limpiar filtros
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -1112,7 +1229,12 @@ export default function App() {
             )}
           </div>
         ) : sorted.length === 0 ? (
-          <p style={{ color: MUTED, textAlign: "center", padding: "40px 0" }}>Ningún vino coincide con "{search}".</p>
+          <div style={{ textAlign: "center", padding: "40px 0" }}>
+            <p style={{ color: MUTED, margin: "0 0 10px" }}>No encontramos vinos que coincidan con tu búsqueda.</p>
+            <button onClick={clearFilters} style={{ background: "none", border: `1px solid ${BORDER}`, color: INK, borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontSize: 13.5 }}>
+              Limpiar filtros
+            </button>
+          </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 16 }}>
             {sorted.map((wine) => (
