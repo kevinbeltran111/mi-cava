@@ -263,9 +263,16 @@ function ProfileSetup({ onSubmit }) {
 }
 
 // ---------- Wine form/detail modal ----------
-function WineModal({ wine, myUserId, myName, canEdit, onSave, onDelete, onRate, onCancel }) {
+function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDelete, onRate, onCancel }) {
   const isNew = !wine;
   const isAuthor = isNew || (wine.userId === myUserId && canEdit);
+  const [entryMode, setEntryMode] = useState(isNew ? null : "manual"); // null | 'manual' | 'photo'
+  const [identifyBlob, setIdentifyBlob] = useState(null);
+  const [identifyPreview, setIdentifyPreview] = useState(null);
+  const [identifying, setIdentifying] = useState(false);
+  const [identifyError, setIdentifyError] = useState(null);
+  const [techNotes, setTechNotes] = useState(null);
+  const identifyFileRef = useRef(null);
   const [draft, setDraft] = useState(
     wine
       ? { ...wine }
@@ -290,6 +297,56 @@ function WineModal({ wine, myUserId, myName, canEdit, onSave, onDelete, onRate, 
       update("foto", URL.createObjectURL(blob));
     } finally {
       setProcessingPhoto(false);
+    }
+  };
+
+  const handleIdentifyPhotoPick = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIdentifyError(null);
+    const blob = await compressImageToBlob(file);
+    setIdentifyBlob(blob);
+    setIdentifyPreview(URL.createObjectURL(blob));
+  };
+
+  const runIdentify = async () => {
+    if (!identifyBlob) return;
+    setIdentifying(true);
+    setIdentifyError(null);
+    try {
+      const base64 = await blobToBase64(identifyBlob);
+      const resp = await fetch("/api/identify-wine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ imageBase64: base64 }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || "No se pudo identificar la etiqueta");
+
+      const r = result.result || {};
+      setDraft((w) => ({
+        ...w,
+        nombre: r.nombre || w.nombre,
+        bodega: r.bodega || w.bodega,
+        varietal: r.varietal || w.varietal,
+        anada: r.anada || w.anada,
+        region: r.region || w.region,
+        lugar: r.lugar || w.lugar,
+        precio: r.precio != null ? r.precio : w.precio,
+        maridaje: r.maridaje || w.maridaje,
+      }));
+      setTechNotes(r.notas_tecnicas || null);
+      // La foto usada para identificar queda también como foto del vino,
+      // así no hay que sacarla dos veces (no se guarda nada todavía —
+      // recién se sube si el usuario confirma "Guardar" más abajo).
+      setPhotoBlob(identifyBlob);
+      update("foto", identifyPreview);
+      if (r.advertencia) setIdentifyError(r.advertencia);
+      setEntryMode("manual");
+    } catch (err) {
+      setIdentifyError(err.message || "No se pudo identificar la etiqueta");
+    } finally {
+      setIdentifying(false);
     }
   };
 
@@ -323,6 +380,87 @@ function WineModal({ wine, myUserId, myName, canEdit, onSave, onDelete, onRate, 
             </div>
           )}
 
+          {entryMode === null && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "10px 0 4px" }}>
+              <p style={{ color: MUTED, fontSize: 13.5, margin: "0 0 4px", textAlign: "center" }}>¿Cómo querés cargar este vino?</p>
+              <button
+                onClick={() => setEntryMode("manual")}
+                style={{ padding: "14px 16px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, fontSize: 15, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
+              >
+                Cargar manualmente
+              </button>
+              <button
+                onClick={() => setEntryMode("photo")}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderRadius: 10, border: `1px solid ${GOLD}`, background: CREAM, color: BORDEAUX, fontSize: 15, fontWeight: 700, cursor: "pointer", textAlign: "left" }}
+              >
+                <Camera size={18} /> Identificar con foto
+              </button>
+            </div>
+          )}
+
+          {entryMode === "photo" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "6px 0" }}>
+              <p style={{ color: MUTED, fontSize: 13, margin: 0 }}>
+                Sacá o subí una foto de la etiqueta. La IA va a proponer los datos, pero vos los revisás y confirmás antes de guardar nada.
+              </p>
+              <div
+                onClick={() => !identifying && identifyFileRef.current?.click()}
+                style={{ width: 170, aspectRatio: "4 / 5", margin: "0 auto", borderRadius: 10, overflow: "hidden", cursor: identifying ? "default" : "pointer", border: `1px dashed ${GOLD}`, position: "relative" }}
+              >
+                {identifyPreview ? (
+                  <img src={identifyPreview} alt="Etiqueta a identificar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : (
+                  <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, color: MUTED, background: CREAM }}>
+                    <Camera size={26} strokeWidth={1.4} />
+                    <span style={{ fontSize: 13 }}>Sacar o subir foto</span>
+                  </div>
+                )}
+                <input ref={identifyFileRef} type="file" accept="image/*" capture="environment" onChange={handleIdentifyPhotoPick} style={{ display: "none" }} />
+              </div>
+
+              {identifyError && (
+                <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "9px 12px", borderRadius: 8, fontSize: 13 }}>
+                  {identifyError}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  onClick={() => { setEntryMode(null); setIdentifyBlob(null); setIdentifyPreview(null); setIdentifyError(null); }}
+                  style={{ flex: 1, padding: "11px 0", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 14 }}
+                >
+                  Volver
+                </button>
+                <button
+                  disabled={!identifyBlob || identifying}
+                  onClick={runIdentify}
+                  style={{ flex: 1, padding: "11px 0", borderRadius: 8, border: "none", background: identifyBlob && !identifying ? BORDEAUX : BORDER, color: identifyBlob && !identifying ? CREAM : MUTED, cursor: identifyBlob && !identifying ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                >
+                  {identifying ? (
+                    <>
+                      <Loader2 size={16} style={{ animation: "spin 0.8s linear infinite" }} /> Analizando etiqueta...
+                    </>
+                  ) : (
+                    "Analizar"
+                  )}
+                </button>
+              </div>
+              <button
+                onClick={() => { setEntryMode("manual"); }}
+                style={{ background: "none", border: "none", color: MUTED, textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: 0 }}
+              >
+                Prefiero cargar los datos a mano
+              </button>
+            </div>
+          )}
+
+          {entryMode === "manual" && (
+          <>
+          {techNotes && (
+            <div style={{ background: CREAM, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "10px 12px", fontSize: 12.5, color: MUTED, marginBottom: 16 }}>
+              <strong style={{ color: INK }}>Revisá la información identificada antes de guardar.</strong> Info técnica detectada: {techNotes}
+            </div>
+          )}
           {isAuthor ? (
             <>
               <div
@@ -444,8 +582,11 @@ function WineModal({ wine, myUserId, myName, canEdit, onSave, onDelete, onRate, 
               </div>
             )}
           </div>
+          </>
+          )}
         </div>
 
+        {entryMode === "manual" && (
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderTop: `1px solid ${BORDER}` }}>
           <div>
             {!isNew && isAuthor && (
@@ -467,6 +608,7 @@ function WineModal({ wine, myUserId, myName, canEdit, onSave, onDelete, onRate, 
             </button>
           </div>
         </div>
+        )}
       </div>
       <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
     </div>
@@ -991,6 +1133,7 @@ export default function App() {
           myUserId={session.user.id}
           myName={profile.nombre}
           canEdit={canEdit}
+          accessToken={session.access_token}
           onSave={handleSave}
           onDelete={handleDelete}
           onRate={handleRate}
