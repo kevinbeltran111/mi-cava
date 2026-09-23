@@ -16,6 +16,7 @@ import {
   MapPin,
   Package,
   SlidersHorizontal,
+  Heart,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -277,7 +278,7 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
   const [draft, setDraft] = useState(
     wine
       ? { ...wine }
-      : { id: uid(), nombre: "", bodega: "", varietal: "", anada: "", precio: "", maridaje: "", region: "", lugar: "", stock: 1, foto: null, userId: myUserId }
+      : { id: uid(), nombre: "", bodega: "", varietal: "", anada: "", precio: "", maridaje: "", region: "", lugar: "", stock: 1, favorito: false, foto: null, userId: myUserId }
   );
   const [photoBlob, setPhotoBlob] = useState(null);
   const [myRating, setMyRating] = useState(wine?.ratings?.[myUserId]?.valor || 0);
@@ -375,12 +376,6 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
         </div>
 
         <div style={{ padding: 20 }}>
-          {!isNew && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: MUTED, marginBottom: 16 }}>
-              <User size={13} /> Cargado por {wine.autorNombre}
-            </div>
-          )}
-
           {entryMode === null && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "10px 0 4px" }}>
               <p style={{ color: MUTED, fontSize: 13.5, margin: "0 0 4px", textAlign: "center" }}>¿Cómo querés cargar este vino?</p>
@@ -551,6 +546,15 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
                   </button>
                 </div>
               </Field>
+
+              <button
+                type="button"
+                onClick={() => update("favorito", !draft.favorito)}
+                style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", padding: "4px 0 16px", color: draft.favorito ? DANGER : MUTED, fontSize: 13.5 }}
+              >
+                <Heart size={17} fill={draft.favorito ? DANGER : "none"} />
+                {draft.favorito ? "Favorito" : "Marcar como favorito"}
+              </button>
             </>
           ) : (
             <div style={{ marginBottom: 18, fontSize: 14, color: INK, lineHeight: 1.9 }}>
@@ -775,25 +779,25 @@ function WineCard({ wine, onClick, clickable }) {
             const stock = wine.stock ?? 0;
             if (stock === 0) {
               return (
-                <span style={{ position: "absolute", top: 6, right: 6, background: DANGER, color: "#fff", fontSize: 10.5, fontWeight: 700, padding: "3px 7px", borderRadius: 999 }}>
-                  Sin stock
+                <span style={{ position: "absolute", top: 6, right: 6, background: "#8B8578", color: "#fff", fontSize: 10.5, fontWeight: 700, padding: "3px 7px", borderRadius: 999 }}>
+                  ⚪ Tomado
                 </span>
               );
             }
-            if (stock <= 2) {
-              return (
-                <span style={{ position: "absolute", top: 6, right: 6, background: GOLD, color: BORDEAUX_DARK, fontSize: 10.5, fontWeight: 700, padding: "3px 7px", borderRadius: 999 }}>
-                  Quedan {stock}
-                </span>
-              );
-            }
-            return null;
+            return (
+              <span style={{ position: "absolute", top: 6, right: 6, background: stock <= 2 ? GOLD : "#4A8B5C", color: stock <= 2 ? BORDEAUX_DARK : "#fff", fontSize: 10.5, fontWeight: 700, padding: "3px 7px", borderRadius: 999 }}>
+                🟢 Tengo {stock}
+              </span>
+            );
           })()}
         </div>
       </div>
       <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
         <div>
-          <h3 style={{ margin: 0, fontFamily: SERIF, fontSize: 17, color: INK, lineHeight: 1.25 }}>{wine.nombre}</h3>
+          <h3 style={{ margin: 0, fontFamily: SERIF, fontSize: 17, color: INK, lineHeight: 1.25, display: "flex", alignItems: "center", gap: 6 }}>
+            {wine.nombre}
+            {wine.favorito && <Heart size={14} fill={DANGER} color={DANGER} />}
+          </h3>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: MUTED }}>
             {[wine.bodega, wine.varietal].filter(Boolean).join(" · ") || "Sin datos de bodega"}
             {wine.anada ? ` · ${wine.anada}` : ""}
@@ -806,11 +810,8 @@ function WineCard({ wine, onClick, clickable }) {
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: MUTED }}>
-          <User size={12} />
-          <span>{wine.autorNombre}</span>
           {wine.maridaje && (
             <>
-              <span style={{ color: BORDER }}>|</span>
               <UtensilsCrossed size={12} />
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{wine.maridaje}</span>
             </>
@@ -887,10 +888,12 @@ export default function App() {
   }, []);
 
   async function loadWines() {
+    if (!session) return;
     setLoading(true);
     const { data, error } = await supabase
       .from("wines")
       .select("*, profiles(nombre), ratings(user_id, valor, profiles(nombre))")
+      .eq("user_id", session.user.id)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -900,26 +903,43 @@ export default function App() {
       return;
     }
 
+    const { data: privados, error: privError } = await supabase
+      .from("wine_privado")
+      .select("wine_id, precio, stock, favorito")
+      .eq("user_id", session.user.id);
+
+    if (privError) {
+      console.error(privError);
+      setSaveError(true);
+      setLoading(false);
+      return;
+    }
+
+    const privadoPorVino = Object.fromEntries((privados || []).map((p) => [p.wine_id, p]));
+
     setWines(
-      (data || []).map((w) => ({
-        id: w.id,
-        nombre: w.nombre,
-        bodega: w.bodega,
-        varietal: w.varietal,
-        anada: w.anada,
-        precio: w.precio,
-        maridaje: w.maridaje,
-        region: w.region,
-        lugar: w.lugar,
-        stock: w.stock ?? 0,
-        foto: w.foto_url,
-        userId: w.user_id,
-        autorNombre: w.profiles?.nombre || "—",
-        fechaAgregado: w.created_at,
-        ratings: Object.fromEntries(
-          (w.ratings || []).map((r) => [r.user_id, { valor: Number(r.valor), nombre: r.profiles?.nombre || "—" }])
-        ),
-      }))
+      (data || []).map((w) => {
+        const priv = privadoPorVino[w.id] || {};
+        return {
+          id: w.id,
+          nombre: w.nombre,
+          bodega: w.bodega,
+          varietal: w.varietal,
+          anada: w.anada,
+          precio: priv.precio ?? null,
+          maridaje: w.maridaje,
+          region: w.region,
+          lugar: w.lugar,
+          stock: priv.stock ?? 0,
+          favorito: priv.favorito ?? false,
+          foto: w.foto_url,
+          userId: w.user_id,
+          fechaAgregado: w.created_at,
+          ratings: Object.fromEntries(
+            (w.ratings || []).map((r) => [r.user_id, { valor: Number(r.valor), nombre: r.profiles?.nombre || "—" }])
+          ),
+        };
+      })
     );
     setLoading(false);
   }
@@ -943,22 +963,32 @@ export default function App() {
         if (!resp.ok) throw new Error(result.error || "No se pudo subir la foto");
         foto_url = result.url;
       }
-      const payload = {
+
+      const winePayload = {
         id: draft.id,
         nombre: draft.nombre,
         bodega: draft.bodega || null,
         varietal: draft.varietal || null,
         anada: draft.anada ? Number(draft.anada) : null,
-        precio: draft.precio ? Number(draft.precio) : null,
         maridaje: draft.maridaje || null,
         region: draft.region || null,
         lugar: draft.lugar || null,
-        stock: Math.max(0, Math.round(Number(draft.stock) || 0)),
         foto_url,
         user_id: draft.userId,
       };
-      const { error } = await supabase.from("wines").upsert(payload);
-      if (error) throw error;
+      const { error: wineError } = await supabase.from("wines").upsert(winePayload);
+      if (wineError) throw wineError;
+
+      const privadoPayload = {
+        wine_id: draft.id,
+        user_id: draft.userId,
+        precio: draft.precio ? Number(draft.precio) : null,
+        stock: Math.max(0, Math.round(Number(draft.stock) || 0)),
+        favorito: Boolean(draft.favorito),
+      };
+      const { error: privError } = await supabase.from("wine_privado").upsert(privadoPayload);
+      if (privError) throw privError;
+
       setSaveError(false);
       await loadWines();
     } catch (err) {
@@ -1070,6 +1100,10 @@ export default function App() {
   const hasProfile = Boolean(session && profile);
   const canEdit = hasProfile && (role === "admin" || role === "editor");
   const isAdmin = hasProfile && role === "admin";
+  const hasCava = hasProfile && role !== "viewer";
+  const totalVinos = wines.length;
+  const disponibles = wines.filter((w) => (w.stock ?? 0) > 0).length;
+  const tomados = totalVinos - disponibles;
 
   if (session && profile === null) {
     return <ProfileSetup onSubmit={handleCreateProfile} />;
@@ -1081,6 +1115,12 @@ export default function App() {
         <div style={{ maxWidth: 1000, margin: "0 auto", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
           <div>
             <h1 style={{ margin: 0, fontFamily: SERIF, fontSize: 32, color: CREAM, fontWeight: 700, borderBottom: `2px solid ${GOLD}`, display: "inline-block", paddingBottom: 4 }}>Mi Cava</h1>
+            {hasCava && (
+              <p style={{ margin: "6px 0 0", color: GOLD_SOFT, fontSize: 13, opacity: 0.9 }}>
+                {totalVinos} {totalVinos === 1 ? "vino registrado" : "vinos registrados"}
+                {totalVinos > 0 && <> · {disponibles} disponible{disponibles === 1 ? "" : "s"} · {tomados} tomado{tomados === 1 ? "" : "s"}</>}
+              </p>
+            )}
             <p style={{ margin: "8px 0 0", color: GOLD_SOFT, fontSize: 13.5 }}>
               {hasProfile ? (
                 <>
@@ -1123,6 +1163,28 @@ export default function App() {
       </div>
 
       <div style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 24px 60px" }}>
+        {!hasCava && hasProfile ? (
+          <div style={{ textAlign: "center", padding: "80px 20px", border: `1px dashed ${BORDER}`, borderRadius: 12, background: CARD_BG }}>
+            <Wine size={38} color={GOLD} strokeWidth={1.2} style={{ marginBottom: 14 }} />
+            <h3 style={{ fontFamily: SERIF, fontSize: 20, margin: "0 0 6px", color: BORDEAUX }}>Todavía no tenés tu propia Cava</h3>
+            <p style={{ color: MUTED, fontSize: 14, maxWidth: 360, margin: "0 auto" }}>
+              Por ahora podés ingresar a CavaVinos, pero cargar y armar tu propia biblioteca de vinos es para cuentas Editor. Descubrir (ver y seguir las cavas de otras personas) todavía no está disponible.
+            </p>
+          </div>
+        ) : !hasProfile ? (
+          <div style={{ textAlign: "center", padding: "80px 20px", border: `1px dashed ${BORDER}`, borderRadius: 12, background: CARD_BG }}>
+            <Wine size={38} color={GOLD} strokeWidth={1.2} style={{ marginBottom: 14 }} />
+            <h3 style={{ fontFamily: SERIF, fontSize: 20, margin: "0 0 6px", color: BORDEAUX }}>Mi Cava es personal</h3>
+            <p style={{ color: MUTED, fontSize: 14, margin: "0 0 20px" }}>Iniciá sesión para ver y armar tu propia biblioteca de vinos.</p>
+            <button
+              onClick={() => setShowLogin(true)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, background: BORDEAUX, color: CREAM, border: "none", borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+            >
+              <LogIn size={16} /> Iniciar sesión
+            </button>
+          </div>
+        ) : (
+        <>
         {wines.length > 0 && (
           <div style={{ marginBottom: 22 }}>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -1179,9 +1241,9 @@ export default function App() {
                   {anadaOptions.map((a) => <option key={a} value={a}>{a}</option>)}
                 </select>
                 <select value={filterStock} onChange={(e) => setFilterStock(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
-                  <option value="todos">Stock: todos</option>
-                  <option value="con">Con stock</option>
-                  <option value="sin">Sin stock</option>
+                  <option value="todos">Todos</option>
+                  <option value="con">Tengo</option>
+                  <option value="sin">Tomé</option>
                 </select>
               </div>
             )}
@@ -1246,6 +1308,8 @@ export default function App() {
               />
             ))}
           </div>
+        )}
+        </>
         )}
       </div>
 
