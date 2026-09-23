@@ -142,3 +142,15 @@ vinos ya cargados (si nadie cargó todavía un vino de "Cafayate", esa opción
 no aparece hasta que exista uno). Se muestra la cantidad de resultados y un
 botón para limpiar todo. No se agregó ninguna tabla ni columna nueva —
 todo se calcula a partir de los datos que ya existen.
+Mi Cava (privada, por usuario)
+Cada usuario ve y gestiona únicamente su propia biblioteca de vinos. Precio,
+stock y favorito viven en una tabla separada (`wine_privado`), siempre
+privada, para que ninguna futura función social pueda exponerlos por
+accidente — la identidad del vino (nombre, bodega, foto, etc.) y la
+experiencia personal quedan en tablas distintas a propósito.
+VIEWER ya no tiene Cava propia: solo EDITOR y ADMIN cargan y ven vinos.
+Aplicar (una sola vez, en Supabase → SQL Editor):
+`supabase/migration_mi_cava_privada.sql`. Migra precio/stock de los vinos
+existentes sin perder nada, y deja creada la tabla `consumos` y la función
+`registrar_consumo` (base para "Tomar una" — el botón en la interfaz todavía
+no está construido, queda para la próxima etapa).
