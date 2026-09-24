@@ -174,20 +174,53 @@ function LoginModal({ onClose }) {
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
+  const [notAuthorized, setNotAuthorized] = useState(false);
+
+  const [showRequest, setShowRequest] = useState(false);
+  const [reqNombre, setReqNombre] = useState("");
+  const [reqEmail, setReqEmail] = useState("");
+  const [reqSending, setReqSending] = useState(false);
+  const [reqSent, setReqSent] = useState(false);
+  const [reqError, setReqError] = useState(null);
 
   const handleSend = async () => {
     setSending(true);
     setError(null);
+    setNotAuthorized(false);
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim(),
       options: { emailRedirectTo: window.location.origin, shouldCreateUser: false },
     });
     setSending(false);
     if (error) {
-      setError("No se pudo enviar el link. Si tu mail no fue invitado, pedile a quien administra la cava que te invite desde Supabase.");
+      if (/rate limit/i.test(error.message || "")) {
+        setError("Ya pediste un link hace poco — esperá un minuto y probá de nuevo.");
+      } else {
+        setNotAuthorized(true);
+        setReqEmail(email.trim());
+      }
       return;
     }
     setSent(true);
+  };
+
+  const handleSendRequest = async () => {
+    setReqSending(true);
+    setReqError(null);
+    const { error } = await supabase.from("access_requests").insert({
+      nombre: reqNombre.trim(),
+      email: reqEmail.trim(),
+    });
+    setReqSending(false);
+    if (error) {
+      if (error.code === "23505") {
+        setReqError("Ya hay una solicitud pendiente con ese mail — esperá a que la revisemos.");
+      } else {
+        setReqError("No se pudo enviar la solicitud. Probá de nuevo en un momento.");
+      }
+      return;
+    }
+    setReqSent(true);
   };
 
   return (
@@ -199,14 +232,56 @@ function LoginModal({ onClose }) {
             <X size={20} />
           </button>
         </div>
+
         {sent ? (
           <p style={{ color: INK, fontSize: 14, lineHeight: 1.6 }}>
             Te mandamos un link a <strong>{email}</strong>. Abrilo desde este mismo dispositivo para entrar.
           </p>
+        ) : reqSent ? (
+          <div>
+            <p style={{ color: INK, fontSize: 14, fontWeight: 600, margin: "0 0 6px" }}>Solicitud enviada</p>
+            <p style={{ color: MUTED, fontSize: 13.5, lineHeight: 1.6, margin: 0 }}>
+              Recibimos tu solicitud. Cuando sea aprobada, vas a poder ingresar a CavaVinos.
+            </p>
+          </div>
+        ) : showRequest ? (
+          <>
+            <p style={{ color: MUTED, fontSize: 13.5, marginBottom: 14 }}>Dejanos tu nombre y tu mail para solicitar acceso.</p>
+            <input
+              style={{ ...inputStyle, marginBottom: 10 }}
+              placeholder="Tu nombre"
+              value={reqNombre}
+              onChange={(e) => setReqNombre(e.target.value)}
+            />
+            <div style={{ position: "relative", marginBottom: 12 }}>
+              <Mail size={15} color={MUTED} style={{ position: "absolute", left: 12, top: 12 }} />
+              <input
+                style={{ ...inputStyle, paddingLeft: 34 }}
+                type="email"
+                placeholder="tu@mail.com"
+                value={reqEmail}
+                onChange={(e) => setReqEmail(e.target.value)}
+              />
+            </div>
+            {reqError && <p style={{ color: DANGER, fontSize: 13, marginBottom: 10 }}>{reqError}</p>}
+            <button
+              disabled={!reqNombre.trim() || !reqEmail.trim() || reqSending}
+              onClick={handleSendRequest}
+              style={{ width: "100%", padding: "11px 0", borderRadius: 8, border: "none", background: reqNombre.trim() && reqEmail.trim() ? BORDEAUX : BORDER, color: reqNombre.trim() && reqEmail.trim() ? CREAM : MUTED, fontWeight: 700, fontSize: 14, cursor: reqNombre.trim() && reqEmail.trim() ? "pointer" : "not-allowed" }}
+            >
+              {reqSending ? "Enviando..." : "Solicitar acceso"}
+            </button>
+            <button
+              onClick={() => setShowRequest(false)}
+              style={{ background: "none", border: "none", color: MUTED, textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: "10px 0 0", display: "block", width: "100%", textAlign: "center" }}
+            >
+              Volver
+            </button>
+          </>
         ) : (
           <>
             <p style={{ color: MUTED, fontSize: 13.5, marginBottom: 14 }}>
-              Solo pueden cargar y editar quienes fueron invitados. Ingresá tu mail y te mandamos un link para entrar (sin contraseña).
+              Solo pueden entrar quienes fueron invitados. Ingresá tu mail y te mandamos un link para entrar (sin contraseña).
             </p>
             <div style={{ position: "relative", marginBottom: 12 }}>
               <Mail size={15} color={MUTED} style={{ position: "absolute", left: 12, top: 12 }} />
@@ -227,6 +302,19 @@ function LoginModal({ onClose }) {
             >
               {sending ? "Enviando..." : "Enviar link"}
             </button>
+
+            {notAuthorized && (
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${BORDER}`, textAlign: "center" }}>
+                <p style={{ color: INK, fontSize: 13.5, margin: "0 0 4px", fontWeight: 600 }}>Todavía no tenés acceso a CavaVinos.</p>
+                <p style={{ color: MUTED, fontSize: 13, margin: "0 0 10px" }}>Si querés probar la aplicación, podés solicitar acceso.</p>
+                <button
+                  onClick={() => setShowRequest(true)}
+                  style={{ background: "none", border: `1px solid ${GOLD}`, color: BORDEAUX, borderRadius: 8, padding: "9px 16px", cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}
+                >
+                  Solicitar acceso
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -642,11 +730,15 @@ function ConfirmDialog({ message, onConfirm, onCancel }) {
 const ROLE_LABEL = { admin: "Admin", editor: "Editor", viewer: "Viewer" };
 
 // ---------- Panel de administración (solo ADMIN) ----------
-function AdminPanel({ myUserId, onClose }) {
+function AdminPanel({ myUserId, accessToken, onClose }) {
   const [users, setUsers] = useState(null);
   const [error, setError] = useState(null);
   const [pendingChange, setPendingChange] = useState(null); // { id, nombre, from, to }
   const [saving, setSaving] = useState(false);
+
+  const [requests, setRequests] = useState(null);
+  const [reqError, setReqError] = useState(null);
+  const [reqActionId, setReqActionId] = useState(null);
 
   const loadUsers = async () => {
     setError(null);
@@ -658,8 +750,22 @@ function AdminPanel({ myUserId, onClose }) {
     setUsers(data || []);
   };
 
+  const loadRequests = async () => {
+    setReqError(null);
+    const { data, error } = await supabase
+      .from("access_requests")
+      .select("id, nombre, email, status, created_at")
+      .order("created_at", { ascending: false });
+    if (error) {
+      setReqError(error.message);
+      return;
+    }
+    setRequests(data || []);
+  };
+
   useEffect(() => {
     loadUsers();
+    loadRequests();
   }, []);
 
   const applyChange = async () => {
@@ -677,6 +783,41 @@ function AdminPanel({ myUserId, onClose }) {
     }
     await loadUsers();
   };
+
+  const approveRequest = async (r) => {
+    setReqActionId(r.id);
+    setReqError(null);
+    try {
+      const resp = await fetch("/api/invite-approved-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ request_id: r.id }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || "No se pudo aprobar la solicitud");
+      await loadRequests();
+    } catch (err) {
+      setReqError(err.message || "No se pudo aprobar la solicitud");
+    } finally {
+      setReqActionId(null);
+    }
+  };
+
+  const rejectRequest = async (r) => {
+    setReqActionId(r.id);
+    setReqError(null);
+    const { error } = await supabase.from("access_requests").update({ status: "rejected", updated_at: new Date().toISOString() }).eq("id", r.id);
+    setReqActionId(null);
+    if (error) {
+      setReqError(error.message);
+      return;
+    }
+    await loadRequests();
+  };
+
+  const pendingRequests = (requests || []).filter((r) => r.status === "pending");
+  const otherRequests = (requests || []).filter((r) => r.status !== "pending");
+  const STATUS_LABEL = { pending: "Pendiente", approved: "Aprobada", rejected: "Rechazada" };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 60 }} onClick={onClose}>
@@ -734,6 +875,58 @@ function AdminPanel({ myUserId, onClose }) {
           <p style={{ color: MUTED, fontSize: 12.5, marginTop: 14 }}>
             No podés cambiar tu propio rol — pedile a otro administrador que lo haga.
           </p>
+
+          <h3 style={{ fontFamily: SERIF, fontSize: 16, color: INK, margin: "24px 0 12px", paddingTop: 16, borderTop: `1px solid ${BORDER}` }}>
+            Solicitudes de acceso {pendingRequests.length > 0 && `(${pendingRequests.length})`}
+          </h3>
+
+          {reqError && (
+            <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "10px 14px", borderRadius: 8, fontSize: 13, marginBottom: 14 }}>
+              {reqError}
+            </div>
+          )}
+
+          {requests === null ? (
+            <div style={{ display: "flex", justifyContent: "center", padding: "20px 0", color: MUTED }}>
+              <Loader2 size={20} style={{ animation: "spin 0.8s linear infinite" }} />
+            </div>
+          ) : requests.length === 0 ? (
+            <p style={{ color: MUTED, fontSize: 13 }}>No hay solicitudes todavía.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {[...pendingRequests, ...otherRequests].map((r) => (
+                <div key={r.id} style={{ padding: "10px 12px", border: `1px solid ${BORDER}`, borderRadius: 10, background: "#FFFDFA" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 14, color: INK, fontWeight: 600 }}>{r.nombre}</div>
+                      <div style={{ fontSize: 12.5, color: MUTED, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.email}</div>
+                      <div style={{ fontSize: 11.5, color: MUTED, marginTop: 2 }}>
+                        {new Date(r.created_at).toLocaleDateString("es-AR")} · {STATUS_LABEL[r.status]}
+                      </div>
+                    </div>
+                    {r.status === "pending" && (
+                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        <button
+                          disabled={reqActionId === r.id}
+                          onClick={() => approveRequest(r)}
+                          style={{ padding: "7px 12px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
+                        >
+                          {reqActionId === r.id ? "..." : "Aprobar"}
+                        </button>
+                        <button
+                          disabled={reqActionId === r.id}
+                          onClick={() => rejectRequest(r)}
+                          style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: DANGER, fontSize: 12.5, cursor: "pointer" }}
+                        >
+                          Rechazar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1327,7 +1520,7 @@ export default function App() {
         />
       )}
 
-      {showAdmin && isAdmin && <AdminPanel myUserId={session.user.id} onClose={() => setShowAdmin(false)} />}
+      {showAdmin && isAdmin && <AdminPanel myUserId={session.user.id} accessToken={session.access_token} onClose={() => setShowAdmin(false)} />}
 
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
     </div>
