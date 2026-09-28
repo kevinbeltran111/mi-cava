@@ -17,6 +17,7 @@ import {
   Package,
   SlidersHorizontal,
   Heart,
+  GlassWater,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -166,6 +167,10 @@ function avgOf(ratings) {
   const values = Object.values(ratings || {}).map((r) => r.valor);
   if (values.length === 0) return null;
   return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+function formatFecha(iso) {
+  return new Date(iso).toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" });
 }
 
 // ---------- Login (link mágico) ----------
@@ -353,7 +358,7 @@ function ProfileSetup({ onSubmit }) {
 }
 
 // ---------- Wine form/detail modal ----------
-function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDelete, onRate, onCancel }) {
+function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDelete, onRate, onAbrir, onSaveExperiencia, onCancel }) {
   const isNew = !wine;
   const isAuthor = isNew || (wine.userId === myUserId && canEdit);
   const [entryMode, setEntryMode] = useState(isNew ? null : "manual"); // null | 'manual' | 'photo'
@@ -373,6 +378,66 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
   const [processingPhoto, setProcessingPhoto] = useState(false);
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef(null);
+
+  // ---- Etapa 5: Abrir + experiencias ----
+  const [experiencias, setExperiencias] = useState(null);
+  const [confirmAbrir, setConfirmAbrir] = useState(false);
+  const [abriendo, setAbriendo] = useState(false);
+  const [abrirResultado, setAbrirResultado] = useState(null); // { stock, consumoId } o { error }
+  const [showExperienciaForm, setShowExperienciaForm] = useState(false);
+  const [expPuntuacion, setExpPuntuacion] = useState(0);
+  const [expComida, setExpComida] = useState("");
+  const [expComentario, setExpComentario] = useState("");
+  const [savingExperiencia, setSavingExperiencia] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const loadExperiencias = async () => {
+    if (isNew) return;
+    const { data, error } = await supabase.from("consumos").select("*").eq("wine_id", wine.id).order("fecha", { ascending: false });
+    if (!error) setExperiencias(data || []);
+  };
+
+  useEffect(() => {
+    loadExperiencias();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleAbrirConfirm = async () => {
+    setAbriendo(true);
+    setConfirmAbrir(false);
+    try {
+      const result = await onAbrir(draft.id);
+      setDraft((w) => ({ ...w, stock: result.stock }));
+      setAbrirResultado(result);
+      await loadExperiencias();
+    } catch (err) {
+      setAbrirResultado({ error: err.message || "No se pudo registrar la apertura" });
+    } finally {
+      setAbriendo(false);
+    }
+  };
+
+  const handleGuardarExperienciaInicial = async () => {
+    if (!abrirResultado?.consumoId) return;
+    setSavingExperiencia(true);
+    await onSaveExperiencia(abrirResultado.consumoId, {
+      puntuacion: expPuntuacion > 0 ? expPuntuacion : null,
+      comida: expComida.trim() || null,
+      comentario: expComentario.trim() || null,
+    });
+    setSavingExperiencia(false);
+    setShowExperienciaForm(false);
+    setAbrirResultado(null);
+    setExpPuntuacion(0);
+    setExpComida("");
+    setExpComentario("");
+    await loadExperiencias();
+  };
+
+  const handleSaveExperienciaEdit = async (consumoId, data) => {
+    await onSaveExperiencia(consumoId, data);
+    await loadExperiencias();
+  };
 
   const update = (key, val) => setDraft((w) => ({ ...w, [key]: val }));
   const setStock = (val) => setDraft((w) => ({ ...w, stock: Math.max(0, Math.round(Number(val) || 0)) }));
@@ -656,8 +721,54 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
             </div>
           )}
 
-          <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 4 }}>
-            <Field label="Tu puntaje">
+          {/* ---- Etapa 5: Abrir una botella ---- */}
+          {!isNew && isAuthor && (
+            <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 4 }}>
+              {abrirResultado ? (
+                abrirResultado.error ? (
+                  <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "10px 12px", borderRadius: 8, fontSize: 13 }}>{abrirResultado.error}</div>
+                ) : showExperienciaForm ? (
+                  <div style={{ background: CREAM, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 14 }}>
+                    <Field label="Puntuación de esta experiencia">
+                      <StarRating value={expPuntuacion} onChange={setExpPuntuacion} size={24} />
+                    </Field>
+                    <Field label="¿Con qué lo acompañaste?">
+                      <input style={inputStyle} value={expComida} onChange={(e) => setExpComida(e.target.value)} placeholder="Ej. asado, pastas, quesos..." />
+                    </Field>
+                    <Field label="Algo que quieras recordar">
+                      <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical", fontFamily: SANS }} value={expComentario} onChange={(e) => setExpComentario(e.target.value)} />
+                    </Field>
+                    <button disabled={savingExperiencia} onClick={handleGuardarExperienciaInicial} style={{ width: "100%", padding: "10px 0", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, fontWeight: 600, cursor: "pointer", fontSize: 14 }}>
+                      {savingExperiencia ? "Guardando..." : "Guardar experiencia"}
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ textAlign: "center", background: CREAM, border: `1px solid ${GOLD}`, borderRadius: 10, padding: "16px 14px" }}>
+                    <p style={{ margin: "0 0 4px", fontSize: 14.5, fontWeight: 700, color: BORDEAUX }}>🍷 Botella registrada</p>
+                    <p style={{ margin: "0 0 14px", fontSize: 13, color: MUTED }}>
+                      {abrirResultado.stock > 0 ? `Te quedan ${abrirResultado.stock} botella${abrirResultado.stock === 1 ? "" : "s"}.` : "Ya no te quedan botellas de este vino."}
+                    </p>
+                    <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+                      <button onClick={() => setAbrirResultado(null)} style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 13.5 }}>Ahora no</button>
+                      <button onClick={() => setShowExperienciaForm(true)} style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}>Contar cómo estuvo</button>
+                    </div>
+                  </div>
+                )
+              ) : (
+                <button
+                  disabled={(draft.stock ?? 0) <= 0 || abriendo}
+                  onClick={() => setConfirmAbrir(true)}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 0", borderRadius: 10, border: "none", background: (draft.stock ?? 0) > 0 ? GOLD : BORDER, color: (draft.stock ?? 0) > 0 ? BORDEAUX_DARK : MUTED, fontWeight: 700, fontSize: 15, cursor: (draft.stock ?? 0) > 0 ? "pointer" : "not-allowed" }}
+                >
+                  {abriendo ? <Loader2 size={17} style={{ animation: "spin 0.8s linear infinite" }} /> : <GlassWater size={18} />}
+                  {(draft.stock ?? 0) > 0 ? "Abrir una botella" : "No te quedan botellas"}
+                </button>
+              )}
+            </div>
+          )}
+
+          <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 16 }}>
+            <Field label="Tu puntuación general">
               <StarRating value={myRating} onChange={setMyRating} size={28} />
             </Field>
 
@@ -675,6 +786,28 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
               </div>
             )}
           </div>
+
+          {/* ---- Etapa 5: Tus experiencias ---- */}
+          {!isNew && (
+            <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 16 }}>
+              <h3 style={{ fontFamily: SERIF, fontSize: 15, color: INK, margin: "0 0 10px" }}>
+                Tus experiencias {experiencias && experiencias.length > 0 && `(${experiencias.length})`}
+              </h3>
+              {experiencias === null ? (
+                <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}>
+                  <Loader2 size={18} color={MUTED} style={{ animation: "spin 0.8s linear infinite" }} />
+                </div>
+              ) : experiencias.length === 0 ? (
+                <p style={{ color: MUTED, fontSize: 13 }}>Todavía no registraste ninguna botella de este vino.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {experiencias.map((exp) => (
+                    <ExperienceRow key={exp.id} exp={exp} onSave={handleSaveExperienciaEdit} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           </>
           )}
         </div>
@@ -683,7 +816,7 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderTop: `1px solid ${BORDER}` }}>
           <div>
             {!isNew && isAuthor && (
-              <button onClick={() => onDelete(draft.id)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: DANGER, cursor: "pointer", fontSize: 14, padding: "8px 4px" }}>
+              <button onClick={() => setShowDeleteConfirm(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: DANGER, cursor: "pointer", fontSize: 14, padding: "8px 4px" }}>
                 <Trash2 size={16} /> Eliminar
               </button>
             )}
@@ -703,26 +836,104 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
         </div>
         )}
       </div>
+
+      {confirmAbrir && (
+        <ConfirmDialog
+          message={`¿Abrís una botella?\nTenés ${draft.stock} — te ${draft.stock - 1 === 1 ? "quedará 1 botella" : `quedarán ${draft.stock - 1} botellas`}.`}
+          confirmLabel="Abrir"
+          onConfirm={handleAbrirConfirm}
+          onCancel={() => setConfirmAbrir(false)}
+        />
+      )}
+
+      {showDeleteConfirm && (
+        <ConfirmDialog
+          message={"¿Eliminar este vino de Mi Cava?\nTambién se eliminará el historial asociado a este vino. Esta acción no se puede deshacer."}
+          confirmLabel="Eliminar"
+          danger
+          onConfirm={() => { setShowDeleteConfirm(false); onDelete(draft.id); }}
+          onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
       <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
     </div>
   );
 }
 
 // ---------- Confirmación genérica ----------
-function ConfirmDialog({ message, onConfirm, onCancel }) {
+function ConfirmDialog({ message, confirmLabel = "Confirmar", danger = false, onConfirm, onCancel }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 70 }} onClick={onCancel}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: CARD_BG, borderRadius: 14, padding: 24, maxWidth: 360, width: "100%", boxShadow: "0 20px 60px rgba(43,33,28,0.35)" }}>
-        <p style={{ color: INK, fontSize: 14.5, lineHeight: 1.6, margin: "0 0 20px" }}>{message}</p>
+        <p style={{ color: INK, fontSize: 14.5, lineHeight: 1.6, margin: "0 0 20px", whiteSpace: "pre-line" }}>{message}</p>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
           <button onClick={onCancel} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 14 }}>
             Cancelar
           </button>
-          <button onClick={onConfirm} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: "pointer", fontSize: 14, fontWeight: 600 }}>
-            Confirmar
+          <button onClick={onConfirm} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: danger ? DANGER : BORDEAUX, color: CREAM, cursor: "pointer", fontSize: 14, fontWeight: 600 }}>
+            {confirmLabel}
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------- Una experiencia (fila dentro de "Tus experiencias") ----------
+function ExperienceRow({ exp, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [puntuacion, setPuntuacion] = useState(exp.puntuacion || 0);
+  const [comida, setComida] = useState(exp.comida || "");
+  const [comentario, setComentario] = useState(exp.comentario || "");
+  const [saving, setSaving] = useState(false);
+
+  const isEmpty = !exp.puntuacion && !exp.comida && !exp.comentario;
+
+  const handleSave = async () => {
+    setSaving(true);
+    await onSave(exp.id, { puntuacion: puntuacion > 0 ? puntuacion : null, comida: comida.trim() || null, comentario: comentario.trim() || null });
+    setSaving(false);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div style={{ padding: "10px 12px", border: `1px solid ${GOLD}`, borderRadius: 10, background: CREAM }}>
+        <Field label="Puntuación de esta experiencia">
+          <StarRating value={puntuacion} onChange={setPuntuacion} size={22} />
+        </Field>
+        <Field label="¿Con qué lo acompañaste?">
+          <input style={inputStyle} value={comida} onChange={(e) => setComida(e.target.value)} placeholder="Ej. asado, pastas, quesos..." />
+        </Field>
+        <Field label="Algo que quieras recordar">
+          <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical", fontFamily: SANS }} value={comentario} onChange={(e) => setComentario(e.target.value)} />
+        </Field>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={() => setEditing(false)} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 13 }}>
+            Cancelar
+          </button>
+          <button disabled={saving} onClick={handleSave} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            {saving ? "Guardando..." : "Guardar"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "10px 12px", border: `1px solid ${BORDER}`, borderRadius: 10, background: "#FFFDFA" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: isEmpty ? 0 : 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: MUTED }}>
+          <span>{formatFecha(exp.fecha)}</span>
+          {exp.puntuacion && <StarRating value={exp.puntuacion} onChange={() => {}} size={13} readOnly />}
+        </div>
+        <button onClick={() => setEditing(true)} style={{ background: "none", border: "none", color: BORDEAUX, textDecoration: "underline", cursor: "pointer", fontSize: 12, padding: 0, flexShrink: 0 }}>
+          {isEmpty ? "Completar experiencia" : "Editar"}
+        </button>
+      </div>
+      {exp.comida && <p style={{ margin: "4px 0 0", fontSize: 13.5, color: INK, fontWeight: 600 }}>{exp.comida}</p>}
+      {exp.comentario && <p style={{ margin: "4px 0 0", fontSize: 13, color: MUTED, fontStyle: "italic" }}>"{exp.comentario}"</p>}
     </div>
   );
 }
@@ -1001,6 +1212,9 @@ function WineCard({ wine, onClick, clickable }) {
               {[wine.region, wine.lugar].filter(Boolean).join(" · ")}
             </p>
           )}
+          {(wine.vecesConsumido ?? 0) > 0 && (
+            <p style={{ margin: "2px 0 0", fontSize: 11.5, color: MUTED }}>Tomado {wine.vecesConsumido} {wine.vecesConsumido === 1 ? "vez" : "veces"}</p>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: MUTED }}>
           {wine.maridaje && (
@@ -1045,7 +1259,8 @@ export default function App() {
   const [filterBodega, setFilterBodega] = useState("");
   const [filterVarietal, setFilterVarietal] = useState("");
   const [filterAnada, setFilterAnada] = useState("");
-  const [filterStock, setFilterStock] = useState("todos");
+  const [filterEstado, setFilterEstado] = useState("todos");
+  const [filterFavorito, setFilterFavorito] = useState(false);
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -1110,6 +1325,13 @@ export default function App() {
 
     const privadoPorVino = Object.fromEntries((privados || []).map((p) => [p.wine_id, p]));
 
+    const { data: consumosData, error: consError } = await supabase.from("consumos").select("wine_id").eq("user_id", session.user.id);
+    if (consError) console.error(consError);
+    const conteoConsumos = {};
+    (consumosData || []).forEach((c) => {
+      conteoConsumos[c.wine_id] = (conteoConsumos[c.wine_id] || 0) + 1;
+    });
+
     setWines(
       (data || []).map((w) => {
         const priv = privadoPorVino[w.id] || {};
@@ -1125,6 +1347,7 @@ export default function App() {
           lugar: w.lugar,
           stock: priv.stock ?? 0,
           favorito: priv.favorito ?? false,
+          vecesConsumido: conteoConsumos[w.id] || 0,
           foto: w.foto_url,
           userId: w.user_id,
           fechaAgregado: w.created_at,
@@ -1192,6 +1415,23 @@ export default function App() {
     setEditing(null);
   };
 
+  // ---- Etapa 5: Abrir una botella + experiencias ----
+  const handleAbrir = async (wineId) => {
+    const { data, error } = await supabase.rpc("registrar_consumo", { p_wine_id: wineId });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    await loadWines();
+    return { stock: row.stock, consumoId: row.consumo_id };
+  };
+
+  const handleSaveExperiencia = async (consumoId, cambios) => {
+    const { error } = await supabase.from("consumos").update(cambios).eq("id", consumoId);
+    if (error) {
+      console.error(error);
+      setSaveError(true);
+    }
+  };
+
   const handleRate = async (wineId, valor) => {
     try {
       if (valor > 0) {
@@ -1242,7 +1482,8 @@ export default function App() {
     filterBodega !== "" ||
     filterVarietal !== "" ||
     filterAnada !== "" ||
-    filterStock !== "todos";
+    filterEstado !== "todos" ||
+    filterFavorito;
 
   const clearFilters = () => {
     setSearch("");
@@ -1251,7 +1492,8 @@ export default function App() {
     setFilterBodega("");
     setFilterVarietal("");
     setFilterAnada("");
-    setFilterStock("todos");
+    setFilterEstado("todos");
+    setFilterFavorito(false);
   };
 
   const filtered = wines.filter((w) => {
@@ -1271,9 +1513,10 @@ export default function App() {
     const matchesVarietal = !filterVarietal || w.varietal === filterVarietal;
     const matchesAnada = !filterAnada || String(w.anada) === String(filterAnada);
     const stock = w.stock ?? 0;
-    const matchesStock = filterStock === "todos" || (filterStock === "con" ? stock > 0 : stock === 0);
+    const matchesEstado = filterEstado === "todos" || (filterEstado === "con" ? stock > 0 : (w.vecesConsumido ?? 0) > 0);
+    const matchesFavorito = !filterFavorito || w.favorito;
 
-    return matchesSearch && matchesRegion && matchesLugar && matchesBodega && matchesVarietal && matchesAnada && matchesStock;
+    return matchesSearch && matchesRegion && matchesLugar && matchesBodega && matchesVarietal && matchesAnada && matchesEstado && matchesFavorito;
   });
 
   const sorted = [...filtered].sort((a, b) => {
@@ -1296,7 +1539,7 @@ export default function App() {
   const hasCava = hasProfile && role !== "viewer";
   const totalVinos = wines.length;
   const disponibles = wines.filter((w) => (w.stock ?? 0) > 0).length;
-  const tomados = totalVinos - disponibles;
+  const tomados = wines.filter((w) => (w.vecesConsumido ?? 0) > 0).length;
 
   if (session && profile === null) {
     return <ProfileSetup onSubmit={handleCreateProfile} />;
@@ -1433,11 +1676,15 @@ export default function App() {
                   <option value="">Añada: todas</option>
                   {anadaOptions.map((a) => <option key={a} value={a}>{a}</option>)}
                 </select>
-                <select value={filterStock} onChange={(e) => setFilterStock(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+                <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
                   <option value="todos">Todos</option>
                   <option value="con">Tengo</option>
                   <option value="sin">Tomé</option>
                 </select>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: INK, cursor: "pointer" }}>
+                  <input type="checkbox" checked={filterFavorito} onChange={(e) => setFilterFavorito(e.target.checked)} />
+                  Solo favoritos
+                </label>
               </div>
             )}
 
@@ -1516,6 +1763,8 @@ export default function App() {
           onSave={handleSave}
           onDelete={handleDelete}
           onRate={handleRate}
+          onAbrir={handleAbrir}
+          onSaveExperiencia={handleSaveExperiencia}
           onCancel={() => { setShowForm(false); setEditing(null); }}
         />
       )}
