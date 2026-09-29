@@ -17,7 +17,6 @@ import {
   Package,
   SlidersHorizontal,
   Heart,
-  GlassWater,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -760,7 +759,7 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
                   onClick={() => setConfirmAbrir(true)}
                   style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 0", borderRadius: 10, border: "none", background: (draft.stock ?? 0) > 0 ? GOLD : BORDER, color: (draft.stock ?? 0) > 0 ? BORDEAUX_DARK : MUTED, fontWeight: 700, fontSize: 15, cursor: (draft.stock ?? 0) > 0 ? "pointer" : "not-allowed" }}
                 >
-                  {abriendo ? <Loader2 size={17} style={{ animation: "spin 0.8s linear infinite" }} /> : <GlassWater size={18} />}
+                  {abriendo ? <Loader2 size={17} style={{ animation: "spin 0.8s linear infinite" }} /> : <Wine size={18} />}
                   {(draft.stock ?? 0) > 0 ? "Abrir una botella" : "No te quedan botellas"}
                 </button>
               )}
