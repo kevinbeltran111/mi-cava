@@ -1540,6 +1540,19 @@ export default function App() {
   const disponibles = wines.filter((w) => (w.stock ?? 0) > 0).length;
   const tomados = wines.filter((w) => (w.vecesConsumido ?? 0) > 0).length;
 
+  // Mientras no sabemos todavía si hay sesión (session === undefined), no
+  // renderizamos ningún estado de usuario (ni logueado ni deslogueado) —
+  // solo una pantalla neutra, para evitar el flash de "Iniciar sesión"
+  // antes de que getSession() resuelva.
+  if (session === undefined) {
+    return (
+      <div style={{ minHeight: "100vh", background: CREAM, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Loader2 size={28} color={MUTED} style={{ animation: "spin 0.8s linear infinite" }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      </div>
+    );
+  }
+
   if (session && profile === null) {
     return <ProfileSetup onSubmit={handleCreateProfile} />;
   }
