@@ -17,6 +17,7 @@ import {
   Package,
   SlidersHorizontal,
   Heart,
+  ArrowLeft,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -391,6 +392,9 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
   const [identifyPreview, setIdentifyPreview] = useState(null);
   const [identifying, setIdentifying] = useState(false);
   const [identifyError, setIdentifyError] = useState(null);
+  const [multipleWines, setMultipleWines] = useState(false);
+  const [showPhotoSourceSheet, setShowPhotoSourceSheet] = useState(false);
+  const [showPhotoZoom, setShowPhotoZoom] = useState(false);
   const [techNotes, setTechNotes] = useState(null);
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
@@ -485,15 +489,27 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
     const file = e.target.files?.[0];
     if (!file) return;
     setIdentifyError(null);
+    setMultipleWines(false);
     const blob = await compressImageToBlob(file);
     setIdentifyBlob(blob);
     setIdentifyPreview(URL.createObjectURL(blob));
+  };
+
+  // Descarta la foto elegida y vuelve a la superficie vacía de selección.
+  // La usan tanto "←" (cuando ya hay una foto pero todavía no se analizó)
+  // como "Elegir otra foto" cuando la IA detecta más de un vino.
+  const clearPickedPhoto = () => {
+    setIdentifyBlob(null);
+    setIdentifyPreview(null);
+    setIdentifyError(null);
+    setMultipleWines(false);
   };
 
   const runIdentify = async () => {
     if (!identifyBlob) return;
     setIdentifying(true);
     setIdentifyError(null);
+    setMultipleWines(false);
     try {
       const base64 = await blobToBase64(identifyBlob);
       const resp = await fetch("/api/identify-wine", {
@@ -505,12 +521,26 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
       if (!resp.ok) throw new Error(result.error || "No se pudo identificar la etiqueta");
 
       const r = result.result || {};
+
+      // Una foto = un vino. Si la IA detecta más de una botella/etiqueta sin
+      // que ninguna sea inequívocamente la principal, no completamos nada ni
+      // elegimos arbitrariamente una — pedimos otra foto.
+      if (r.multiples_vinos) {
+        setMultipleWines(true);
+        return;
+      }
+
+      // Cada identificación exitosa reemplaza los campos correspondientes
+      // por completo (nunca cae de vuelta al valor que ya estaba en el
+      // draft): si el usuario volvió atrás y analizó una foto distinta, el
+      // resultado nuevo no debe mezclarse con el de la identificación
+      // anterior. region/lugar (Origen) ya seguían esta misma regla.
       setDraft((w) => ({
         ...w,
-        nombre: r.nombre || w.nombre,
-        bodega: r.bodega || w.bodega,
-        varietal: r.varietal || w.varietal,
-        anada: r.anada || w.anada,
+        nombre: r.nombre || "",
+        bodega: r.bodega || "",
+        varietal: r.varietal || "",
+        anada: r.anada || "",
         // "Origen" es un único campo visible para el usuario, pero region/lugar
         // siguen existiendo por separado para no afectar búsqueda/filtros/persistencia.
         // region queda con el valor estructurado que dio la IA; se muestra
@@ -518,9 +548,9 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
         // Origen a mano (ver updateOrigen), region se limpia — nunca se vuelve
         // a parsear el texto compuesto para reconstruirla.
         region: r.region || null,
-        lugar: composeOrigen(r.lugar, r.region) || w.lugar,
-        precio: r.precio != null ? r.precio : w.precio,
-        maridaje: r.maridaje || w.maridaje,
+        lugar: composeOrigen(r.lugar, r.region) || "",
+        precio: r.precio != null ? r.precio : "",
+        maridaje: r.maridaje || "",
       }));
       setTechNotes(r.notas_tecnicas || null);
       // La foto usada para identificar queda también como foto del vino,
@@ -557,6 +587,24 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
   // No se intenta reconstruir ni parsear region a partir de este texto.
   const updateOrigen = (val) => setDraft((w) => ({ ...w, lugar: val, region: null }));
 
+  // Navegación interna de "Agregar vino" (solo isNew tiene más de un paso).
+  // "←" retrocede un paso sin cerrar el modal; X/Cancelar (onCancel) siguen
+  // abandonando el alta por completo, sin cambios.
+  const canGoBack =
+    isNew && !identifying && ((entryMode === "photo" && !!identifyPreview) || entryMode === "manual");
+
+  const goBack = () => {
+    if (!canGoBack) return;
+    if (entryMode === "manual") {
+      // Vuelve al paso de la foto conservando tanto la foto ya elegida como
+      // todo lo que el usuario haya completado en el draft — retroceder no
+      // debe borrar trabajo por sí solo.
+      setEntryMode("photo");
+    } else {
+      clearPickedPhoto();
+    }
+  };
+
   const canSave = draft.nombre.trim().length > 0 && !processingPhoto && !saving;
   const ratingsEntries = Object.entries(wine?.ratings || {}).filter(([id]) => id !== myUserId);
 
@@ -577,8 +625,19 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
     <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 50 }} onClick={onCancel}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: CARD_BG, borderRadius: 14, width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(43,33,28,0.35)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 20px", borderBottom: `1px solid ${BORDER}` }}>
-          <h2 style={{ margin: 0, fontFamily: SERIF, fontSize: 22, color: BORDEAUX, fontWeight: 700 }}>{isNew ? "Agregar vino" : draft.nombre || "Vino"}</h2>
-          <button onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", color: MUTED, padding: 4 }} aria-label="Cerrar">
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            {canGoBack && (
+              <button
+                onClick={goBack}
+                style={{ background: "none", border: "none", cursor: "pointer", color: INK, padding: 4, flexShrink: 0 }}
+                aria-label="Atrás"
+              >
+                <ArrowLeft size={20} />
+              </button>
+            )}
+            <h2 style={{ margin: 0, fontFamily: SERIF, fontSize: 22, color: BORDEAUX, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isNew ? "Agregar vino" : draft.nombre || "Vino"}</h2>
+          </div>
+          <button onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", color: MUTED, padding: 4, flexShrink: 0 }} aria-label="Cerrar">
             <X size={20} />
           </button>
         </div>
@@ -586,79 +645,97 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
         <div style={{ padding: 20 }}>
           {entryMode === "photo" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "6px 0" }}>
-              <p style={{ color: MUTED, fontSize: 13, margin: 0 }}>
-                Sacá o elegí una foto de la etiqueta. La IA va a proponer los datos, pero vos los revisás y confirmás antes de guardar nada.
-              </p>
-              <div style={{ width: 170, aspectRatio: "4 / 5", margin: "0 auto", borderRadius: 10, overflow: "hidden", border: `1px dashed ${GOLD}`, position: "relative" }}>
+              {/* Superficie principal completa y clickeable (punto 1): al
+                  tocarla se abre el selector Sacar foto / Elegir de la
+                  galería. Reemplaza a los dos botones que antes estaban
+                  siempre visibles por separado. */}
+              <div
+                onClick={() => { if (!identifying && !multipleWines) setShowPhotoSourceSheet(true); }}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: identifyPreview ? 12 : "28px 16px",
+                  borderRadius: 12,
+                  border: `1.5px dashed ${GOLD}`,
+                  background: CREAM,
+                  cursor: identifying || multipleWines ? "default" : "pointer",
+                }}
+              >
                 {identifyPreview ? (
-                  <img src={identifyPreview} alt="Etiqueta a identificar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  <img src={identifyPreview} alt="Etiqueta a identificar" style={{ width: 170, aspectRatio: "4 / 5", objectFit: "cover", borderRadius: 10 }} />
                 ) : (
-                  <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, color: MUTED, background: CREAM }}>
-                    <Camera size={26} strokeWidth={1.4} />
-                    <span style={{ fontSize: 13 }}>Elegí una foto</span>
-                  </div>
+                  <>
+                    <Camera size={30} color={BORDEAUX} strokeWidth={1.4} />
+                    <div style={{ textAlign: "center" }}>
+                      <p style={{ margin: "0 0 4px", fontSize: 15.5, fontWeight: 700, color: BORDEAUX, fontFamily: SERIF }}>
+                        Identificar desde una foto
+                      </p>
+                      <p style={{ margin: 0, fontSize: 13, color: MUTED }}>
+                        Sacá una foto o elegí una de tu galería y Mi Cava completa los datos por vos.
+                      </p>
+                    </div>
+                  </>
                 )}
               </div>
 
               {/* Dos puntos de entrada explícitos (cámara / galería), un único
                   handler compartido (handleIdentifyPhotoPick) — mismo flujo de
-                  compresión, preview e identificación para ambos casos. */}
+                  compresión, preview e identificación para ambos casos. Los
+                  inputs quedan ocultos y se disparan desde el sheet. */}
               <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleIdentifyPhotoPick} style={{ display: "none" }} />
               <input ref={galleryInputRef} type="file" accept="image/*" onChange={handleIdentifyPhotoPick} style={{ display: "none" }} />
 
-              <div style={{ display: "flex", gap: 10 }}>
-                <button
-                  type="button"
-                  disabled={identifying}
-                  onClick={() => cameraInputRef.current?.click()}
-                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px 0", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, cursor: identifying ? "default" : "pointer", fontSize: 14, fontWeight: 600 }}
-                >
-                  <Camera size={16} /> Sacar foto
-                </button>
-                <button
-                  type="button"
-                  disabled={identifying}
-                  onClick={() => galleryInputRef.current?.click()}
-                  style={{ flex: 1, padding: "11px 0", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, cursor: identifying ? "default" : "pointer", fontSize: 14, fontWeight: 600 }}
-                >
-                  Elegir de la galería
-                </button>
-              </div>
+              {multipleWines ? (
+                <>
+                  <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "12px 14px", borderRadius: 8, fontSize: 13 }}>
+                    <strong style={{ display: "block", marginBottom: 4 }}>Veo más de un vino en la foto</strong>
+                    Para identificarlo mejor, elegí o sacá una foto donde se vea un solo vino.
+                  </div>
+                  <button
+                    onClick={clearPickedPhoto}
+                    style={{ padding: "11px 0", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: "pointer", fontSize: 14, fontWeight: 600 }}
+                  >
+                    Elegir otra foto
+                  </button>
+                </>
+              ) : (
+                <>
+                  {identifyError && (
+                    <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "9px 12px", borderRadius: 8, fontSize: 13 }}>
+                      {identifyError}
+                    </div>
+                  )}
 
-              {identifyError && (
-                <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "9px 12px", borderRadius: 8, fontSize: 13 }}>
-                  {identifyError}
-                </div>
+                  <button
+                    disabled={!identifyBlob || identifying}
+                    onClick={runIdentify}
+                    style={{ padding: "11px 0", borderRadius: 8, border: "none", background: identifyBlob && !identifying ? BORDEAUX : BORDER, color: identifyBlob && !identifying ? CREAM : MUTED, cursor: identifyBlob && !identifying ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                  >
+                    {identifying ? (
+                      <>
+                        <Loader2 size={16} style={{ animation: "spin 0.8s linear infinite" }} /> Analizando etiqueta...
+                      </>
+                    ) : (
+                      "Analizar"
+                    )}
+                  </button>
+
+                  {/* La carga manual ya no es una alternativa visible en el
+                      estado inicial (punto 2): solo aparece como vía de
+                      recuperación si la IA falla. skipIdentification no
+                      cambió — conserva la foto y pasa a "Revisá los datos". */}
+                  {identifyError && (
+                    <button
+                      onClick={skipIdentification}
+                      style={{ background: "none", border: "none", color: MUTED, textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: 0 }}
+                    >
+                      Completar los datos manualmente
+                    </button>
+                  )}
+                </>
               )}
-
-              <button
-                disabled={!identifyBlob || identifying}
-                onClick={runIdentify}
-                style={{ padding: "11px 0", borderRadius: 8, border: "none", background: identifyBlob && !identifying ? BORDEAUX : BORDER, color: identifyBlob && !identifying ? CREAM : MUTED, cursor: identifyBlob && !identifying ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-              >
-                {identifying ? (
-                  <>
-                    <Loader2 size={16} style={{ animation: "spin 0.8s linear infinite" }} /> Analizando etiqueta...
-                  </>
-                ) : (
-                  "Analizar"
-                )}
-              </button>
-
-              {identifyError && (
-                <button
-                  onClick={skipIdentification}
-                  style={{ background: "none", border: "none", color: MUTED, textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: 0 }}
-                >
-                  Continuar sin identificar
-                </button>
-              )}
-              <button
-                onClick={skipIdentification}
-                style={{ background: "none", border: "none", color: MUTED, textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: 0 }}
-              >
-                Prefiero cargar los datos a mano
-              </button>
             </div>
           )}
 
@@ -671,9 +748,27 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
           )}
           {isNew ? (
             <>
-              <p style={{ margin: "0 0 18px", fontFamily: SERIF, fontSize: 17, color: BORDEAUX, fontWeight: 700, textAlign: "center" }}>
+              <p style={{ margin: "0 0 14px", fontFamily: SERIF, fontSize: 17, color: BORDEAUX, fontWeight: 700, textAlign: "center" }}>
                 Revisá los datos
               </p>
+
+              {/* La foto usada para identificar (punto 3): visible y lo
+                  bastante grande como para contrastarla con nombre/añada/etc.
+                  sin agregar una segunda selección — es la misma foto que ya
+                  va a quedar como foto del vino. Tocarla la amplía. */}
+              {draft.foto && (
+                <div style={{ marginBottom: 18 }}>
+                  <img
+                    src={draft.foto}
+                    alt="Foto usada para identificar"
+                    onClick={() => setShowPhotoZoom(true)}
+                    style={{ width: "100%", height: 190, objectFit: "cover", borderRadius: 10, cursor: "zoom-in", display: "block" }}
+                  />
+                  <p style={{ margin: "6px 0 0", fontSize: 12, color: MUTED, textAlign: "center" }}>
+                    Foto usada para identificar · tocá para ampliar
+                  </p>
+                </div>
+              )}
 
               <Field label="Nombre del vino">
                 <input style={inputStyle} value={draft.nombre} onChange={(e) => update("nombre", e.target.value)} placeholder="Ej: Rutini Cabernet Malbec" />
@@ -988,7 +1083,67 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
         />
       )}
 
+      {showPhotoSourceSheet && (
+        <PhotoSourceSheet
+          onCamera={() => { setShowPhotoSourceSheet(false); cameraInputRef.current?.click(); }}
+          onGallery={() => { setShowPhotoSourceSheet(false); galleryInputRef.current?.click(); }}
+          onCancel={() => setShowPhotoSourceSheet(false)}
+        />
+      )}
+
+      {showPhotoZoom && draft.foto && (
+        <div
+          onClick={() => setShowPhotoZoom(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(20,14,10,0.92)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, padding: 20, cursor: "zoom-out" }}
+        >
+          <img src={draft.foto} alt="Foto ampliada" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 6 }} />
+          <button
+            onClick={() => setShowPhotoZoom(false)}
+            style={{ position: "absolute", top: 18, right: 18, background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 999, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", cursor: "pointer" }}
+            aria-label="Cerrar"
+          >
+            <X size={20} />
+          </button>
+        </div>
+      )}
+
       <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+    </div>
+  );
+}
+
+// ---------- Selector de fuente de foto (Sacar foto / Elegir de la galería) ----------
+function PhotoSourceSheet({ onCamera, onGallery, onCancel }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 80 }} onClick={onCancel}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: CARD_BG, borderRadius: "16px 16px 0 0", width: "100%", maxWidth: 480, padding: "20px 20px 28px", boxShadow: "0 -10px 40px rgba(43,33,28,0.3)" }}
+      >
+        <p style={{ margin: "0 0 14px", fontFamily: SERIF, fontSize: 16, color: BORDEAUX, fontWeight: 700, textAlign: "center" }}>
+          ¿Cómo querés agregar la foto?
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <button
+            onClick={onCamera}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "15px 0", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, fontSize: 15, fontWeight: 600, cursor: "pointer" }}
+          >
+            <Camera size={18} /> Sacar foto
+          </button>
+          <button
+            onClick={onGallery}
+            style={{ padding: "15px 0", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, fontSize: 15, fontWeight: 600, cursor: "pointer" }}
+          >
+            Elegir de la galería
+          </button>
+          <button
+            onClick={onCancel}
+            style={{ padding: "13px 0", borderRadius: 10, border: "none", background: "none", color: MUTED, fontSize: 14, cursor: "pointer" }}
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
