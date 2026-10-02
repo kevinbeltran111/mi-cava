@@ -1473,7 +1473,15 @@ export default function App() {
       setProfile(data || null);
       loadWines();
     })();
-  }, [session]);
+    // Dependemos del id de usuario, no de la referencia de `session`: un
+    // SIGNED_IN/TOKEN_REFRESHED redundante del mismo usuario (p. ej. al
+    // recuperar foco de la pestaña) entrega un objeto `session` nuevo sin
+    // que el usuario lógico cambie, y no necesitamos recargar perfil/vinos
+    // en ese caso. `session` sigue actualizándose igual vía setSession en
+    // onAuthStateChange (sin cambios ahí), así que el access_token que usan
+    // handleSave/runIdentify/etc. sigue estando al día.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id]);
 
   useEffect(() => {
     const channel = supabase
