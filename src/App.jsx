@@ -1555,7 +1555,11 @@ export default function App() {
   // logueado ni deslogueado) — solo una pantalla neutra. No usamos
   // `session` para esta decisión porque onAuthStateChange puede escribirle
   // un valor transitorio antes de que getSession() resuelva de verdad.
-  if (!authResolved) {
+  // Además, si hay sesión válida pero el perfil todavía no llegó
+  // (profile === undefined), tampoco renderizamos: evita el flash de
+  // "Mi Cava es personal / Iniciar sesión" en el frame en que ya sabemos
+  // que el usuario está autenticado pero aún no sabemos su perfil/rol.
+  if (!authResolved || (session && profile === undefined)) {
     return (
       <div style={{ minHeight: "100vh", background: CREAM, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Loader2 size={28} color={MUTED} style={{ animation: "spin 0.8s linear infinite" }} />
