@@ -1246,6 +1246,7 @@ function WineCard({ wine, onClick, clickable }) {
 
 export default function App() {
   const [session, setSession] = useState(undefined); // undefined = todavía no sabemos
+  const [authResolved, setAuthResolved] = useState(false); // true solo cuando getSession() terminó
   const [profile, setProfile] = useState(undefined);
   const [wines, setWines] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1266,7 +1267,16 @@ export default function App() {
   const [showAdmin, setShowAdmin] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    // getSession() es la única fuente que determina si ya terminamos de
+    // resolver el estado inicial (authResolved). onAuthStateChange puede
+    // disparar antes, con un valor todavía no confiable — sigue
+    // actualizando `session` con normalidad, pero nunca decide por sí solo
+    // que ya terminamos de resolver.
+    supabase.auth
+      .getSession()
+      .then(({ data }) => setSession(data.session))
+      .catch(() => setSession(null))
+      .finally(() => setAuthResolved(true));
     const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
     return () => listener.subscription.unsubscribe();
   }, []);
@@ -1540,11 +1550,12 @@ export default function App() {
   const disponibles = wines.filter((w) => (w.stock ?? 0) > 0).length;
   const tomados = wines.filter((w) => (w.vecesConsumido ?? 0) > 0).length;
 
-  // Mientras no sabemos todavía si hay sesión (session === undefined), no
-  // renderizamos ningún estado de usuario (ni logueado ni deslogueado) —
-  // solo una pantalla neutra, para evitar el flash de "Iniciar sesión"
-  // antes de que getSession() resuelva.
-  if (session === undefined) {
+  // Mientras authResolved sea false (getSession() todavía no terminó, con
+  // éxito o con error), no renderizamos ningún estado de usuario (ni
+  // logueado ni deslogueado) — solo una pantalla neutra. No usamos
+  // `session` para esta decisión porque onAuthStateChange puede escribirle
+  // un valor transitorio antes de que getSession() resuelva de verdad.
+  if (!authResolved) {
     return (
       <div style={{ minHeight: "100vh", background: CREAM, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Loader2 size={28} color={MUTED} style={{ animation: "spin 0.8s linear infinite" }} />
