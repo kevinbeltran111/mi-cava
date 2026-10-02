@@ -172,6 +172,17 @@ function formatFecha(iso) {
   return new Date(iso).toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" });
 }
 
+// Compone el texto visible del campo "Origen" a partir de lugar/region
+// (ambos estructurados, provistos por la IA), evitando duplicar el texto
+// cuando coinciden. No hace el camino inverso: nunca se parsea este texto
+// para reconstruir region/lugar.
+function composeOrigen(lugar, region) {
+  const l = (lugar || "").trim();
+  const r = (region || "").trim();
+  if (l && r) return l.toLowerCase() === r.toLowerCase() ? l : `${l}, ${r}`;
+  return l || r || "";
+}
+
 // ---------- Login (link mágico) ----------
 function LoginModal({ onClose }) {
   const [email, setEmail] = useState("");
@@ -360,17 +371,18 @@ function ProfileSetup({ onSubmit }) {
 function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDelete, onRate, onAbrir, onSaveExperiencia, onCancel }) {
   const isNew = !wine;
   const isAuthor = isNew || (wine.userId === myUserId && canEdit);
-  const [entryMode, setEntryMode] = useState(isNew ? null : "manual"); // null | 'manual' | 'photo'
+  const [entryMode, setEntryMode] = useState(isNew ? "photo" : "manual"); // 'manual' | 'photo'
   const [identifyBlob, setIdentifyBlob] = useState(null);
   const [identifyPreview, setIdentifyPreview] = useState(null);
   const [identifying, setIdentifying] = useState(false);
   const [identifyError, setIdentifyError] = useState(null);
   const [techNotes, setTechNotes] = useState(null);
-  const identifyFileRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const galleryInputRef = useRef(null);
   const [draft, setDraft] = useState(
     wine
       ? { ...wine }
-      : { id: uid(), nombre: "", bodega: "", varietal: "", anada: "", precio: "", maridaje: "", region: "", lugar: "", stock: 1, favorito: false, foto: null, userId: myUserId }
+      : { id: uid(), nombre: "", bodega: "", varietal: "", anada: "", precio: "", maridaje: "", region: null, lugar: "", stock: 1, favorito: false, foto: null, userId: myUserId }
   );
   const [photoBlob, setPhotoBlob] = useState(null);
   const [myRating, setMyRating] = useState(wine?.ratings?.[myUserId]?.valor || 0);
@@ -484,8 +496,14 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
         bodega: r.bodega || w.bodega,
         varietal: r.varietal || w.varietal,
         anada: r.anada || w.anada,
-        region: r.region || w.region,
-        lugar: r.lugar || w.lugar,
+        // "Origen" es un único campo visible para el usuario, pero region/lugar
+        // siguen existiendo por separado para no afectar búsqueda/filtros/persistencia.
+        // region queda con el valor estructurado que dio la IA; se muestra
+        // compuesto junto con lugar dentro del campo Origen. Si el usuario edita
+        // Origen a mano (ver updateOrigen), region se limpia — nunca se vuelve
+        // a parsear el texto compuesto para reconstruirla.
+        region: r.region || null,
+        lugar: composeOrigen(r.lugar, r.region) || w.lugar,
         precio: r.precio != null ? r.precio : w.precio,
         maridaje: r.maridaje || w.maridaje,
       }));
@@ -504,6 +522,26 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
     }
   };
 
+  // La IA ayuda pero nunca bloquea: si falla, o el usuario prefiere no usarla,
+  // se pasa igual a la pantalla de datos, conservando la foto ya tomada/elegida
+  // (si la hay) y dejando region en null porque no hay dato estructurado de IA.
+  const skipIdentification = () => {
+    if (identifyBlob) {
+      setPhotoBlob(identifyBlob);
+      update("foto", identifyPreview);
+    }
+    setDraft((w) => ({ ...w, region: null }));
+    setIdentifyError(null);
+    setEntryMode("manual");
+  };
+
+  // Origen es el único campo geográfico visible/editable en el alta. Si el
+  // usuario lo modifica a mano, region se limpia a null: puede estar
+  // corrigiendo justamente un dato geográfico mal identificado, y no
+  // queremos conservar silenciosamente un valor que ya no es confiable.
+  // No se intenta reconstruir ni parsear region a partir de este texto.
+  const updateOrigen = (val) => setDraft((w) => ({ ...w, lugar: val, region: null }));
+
   const canSave = draft.nombre.trim().length > 0 && !processingPhoto && !saving;
   const ratingsEntries = Object.entries(wine?.ratings || {}).filter(([id]) => id !== myUserId);
 
@@ -511,7 +549,10 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
     setSaving(true);
     try {
       await onSave(draft, photoBlob);
-      await onRate(draft.id, myRating);
+      // La puntuación general no forma parte del alta (la sección ni se
+      // muestra cuando isNew), así que no tiene sentido ejecutar una
+      // operación de rating con el valor inicial (0) en ese caso.
+      if (!isNew) await onRate(draft.id, myRating);
     } finally {
       setSaving(false);
     }
@@ -528,42 +569,45 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
         </div>
 
         <div style={{ padding: 20 }}>
-          {entryMode === null && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "10px 0 4px" }}>
-              <p style={{ color: MUTED, fontSize: 13.5, margin: "0 0 4px", textAlign: "center" }}>¿Cómo querés cargar este vino?</p>
-              <button
-                onClick={() => setEntryMode("manual")}
-                style={{ padding: "14px 16px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, fontSize: 15, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
-              >
-                Cargar manualmente
-              </button>
-              <button
-                onClick={() => setEntryMode("photo")}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderRadius: 10, border: `1px solid ${GOLD}`, background: CREAM, color: BORDEAUX, fontSize: 15, fontWeight: 700, cursor: "pointer", textAlign: "left" }}
-              >
-                <Camera size={18} /> Identificar con foto
-              </button>
-            </div>
-          )}
-
           {entryMode === "photo" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "6px 0" }}>
               <p style={{ color: MUTED, fontSize: 13, margin: 0 }}>
-                Sacá o subí una foto de la etiqueta. La IA va a proponer los datos, pero vos los revisás y confirmás antes de guardar nada.
+                Sacá o elegí una foto de la etiqueta. La IA va a proponer los datos, pero vos los revisás y confirmás antes de guardar nada.
               </p>
-              <div
-                onClick={() => !identifying && identifyFileRef.current?.click()}
-                style={{ width: 170, aspectRatio: "4 / 5", margin: "0 auto", borderRadius: 10, overflow: "hidden", cursor: identifying ? "default" : "pointer", border: `1px dashed ${GOLD}`, position: "relative" }}
-              >
+              <div style={{ width: 170, aspectRatio: "4 / 5", margin: "0 auto", borderRadius: 10, overflow: "hidden", border: `1px dashed ${GOLD}`, position: "relative" }}>
                 {identifyPreview ? (
                   <img src={identifyPreview} alt="Etiqueta a identificar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 ) : (
                   <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, color: MUTED, background: CREAM }}>
                     <Camera size={26} strokeWidth={1.4} />
-                    <span style={{ fontSize: 13 }}>Sacar o subir foto</span>
+                    <span style={{ fontSize: 13 }}>Elegí una foto</span>
                   </div>
                 )}
-                <input ref={identifyFileRef} type="file" accept="image/*" capture="environment" onChange={handleIdentifyPhotoPick} style={{ display: "none" }} />
+              </div>
+
+              {/* Dos puntos de entrada explícitos (cámara / galería), un único
+                  handler compartido (handleIdentifyPhotoPick) — mismo flujo de
+                  compresión, preview e identificación para ambos casos. */}
+              <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleIdentifyPhotoPick} style={{ display: "none" }} />
+              <input ref={galleryInputRef} type="file" accept="image/*" onChange={handleIdentifyPhotoPick} style={{ display: "none" }} />
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  type="button"
+                  disabled={identifying}
+                  onClick={() => cameraInputRef.current?.click()}
+                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px 0", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, cursor: identifying ? "default" : "pointer", fontSize: 14, fontWeight: 600 }}
+                >
+                  <Camera size={16} /> Sacar foto
+                </button>
+                <button
+                  type="button"
+                  disabled={identifying}
+                  onClick={() => galleryInputRef.current?.click()}
+                  style={{ flex: 1, padding: "11px 0", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, cursor: identifying ? "default" : "pointer", fontSize: 14, fontWeight: 600 }}
+                >
+                  Elegir de la galería
+                </button>
               </div>
 
               {identifyError && (
@@ -572,29 +616,30 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
                 </div>
               )}
 
-              <div style={{ display: "flex", gap: 10 }}>
-                <button
-                  onClick={() => { setEntryMode(null); setIdentifyBlob(null); setIdentifyPreview(null); setIdentifyError(null); }}
-                  style={{ flex: 1, padding: "11px 0", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 14 }}
-                >
-                  Volver
-                </button>
-                <button
-                  disabled={!identifyBlob || identifying}
-                  onClick={runIdentify}
-                  style={{ flex: 1, padding: "11px 0", borderRadius: 8, border: "none", background: identifyBlob && !identifying ? BORDEAUX : BORDER, color: identifyBlob && !identifying ? CREAM : MUTED, cursor: identifyBlob && !identifying ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-                >
-                  {identifying ? (
-                    <>
-                      <Loader2 size={16} style={{ animation: "spin 0.8s linear infinite" }} /> Analizando etiqueta...
-                    </>
-                  ) : (
-                    "Analizar"
-                  )}
-                </button>
-              </div>
               <button
-                onClick={() => { setEntryMode("manual"); }}
+                disabled={!identifyBlob || identifying}
+                onClick={runIdentify}
+                style={{ padding: "11px 0", borderRadius: 8, border: "none", background: identifyBlob && !identifying ? BORDEAUX : BORDER, color: identifyBlob && !identifying ? CREAM : MUTED, cursor: identifyBlob && !identifying ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+              >
+                {identifying ? (
+                  <>
+                    <Loader2 size={16} style={{ animation: "spin 0.8s linear infinite" }} /> Analizando etiqueta...
+                  </>
+                ) : (
+                  "Analizar"
+                )}
+              </button>
+
+              {identifyError && (
+                <button
+                  onClick={skipIdentification}
+                  style={{ background: "none", border: "none", color: MUTED, textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: 0 }}
+                >
+                  Continuar sin identificar
+                </button>
+              )}
+              <button
+                onClick={skipIdentification}
                 style={{ background: "none", border: "none", color: MUTED, textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: 0 }}
               >
                 Prefiero cargar los datos a mano
@@ -609,7 +654,77 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
               <strong style={{ color: INK }}>Revisá la información identificada antes de guardar.</strong> Info técnica detectada: {techNotes}
             </div>
           )}
-          {isAuthor ? (
+          {isNew ? (
+            <>
+              <p style={{ margin: "0 0 18px", fontFamily: SERIF, fontSize: 17, color: BORDEAUX, fontWeight: 700, textAlign: "center" }}>
+                Revisá los datos
+              </p>
+
+              <Field label="Nombre del vino">
+                <input style={inputStyle} value={draft.nombre} onChange={(e) => update("nombre", e.target.value)} placeholder="Ej: Rutini Cabernet Malbec" />
+              </Field>
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <Field label="Bodega">
+                    <input style={inputStyle} value={draft.bodega} onChange={(e) => update("bodega", e.target.value)} placeholder="Ej: Rutini Wines" />
+                  </Field>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Field label="Varietal">
+                    <input style={inputStyle} value={draft.varietal} onChange={(e) => update("varietal", e.target.value)} placeholder="Ej: Malbec" />
+                  </Field>
+                </div>
+              </div>
+              <Field label="Añada">
+                <input style={inputStyle} type="number" value={draft.anada} onChange={(e) => update("anada", e.target.value)} placeholder="Ej: 2020" />
+              </Field>
+              <Field label="Origen">
+                <input style={inputStyle} value={draft.lugar || ""} onChange={(e) => updateOrigen(e.target.value)} placeholder="Ej: Gualtallary, Valle de Uco, Mendoza, Argentina" />
+              </Field>
+              <Field label="Maridaje sugerido (opcional)">
+                <input style={inputStyle} value={draft.maridaje} onChange={(e) => update("maridaje", e.target.value)} placeholder="Ej: Carnes rojas, quesos curados" />
+              </Field>
+
+              <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 4 }}>
+                <h3 style={{ fontFamily: SERIF, fontSize: 15, color: INK, margin: "0 0 10px" }}>Tu botella</h3>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <Field label="Cantidad">
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <button
+                          type="button"
+                          onClick={() => setStock((draft.stock ?? 0) - 1)}
+                          style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, fontSize: 18, cursor: "pointer", flexShrink: 0 }}
+                        >
+                          −
+                        </button>
+                        <input
+                          style={{ ...inputStyle, textAlign: "center" }}
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={draft.stock ?? 0}
+                          onChange={(e) => setStock(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setStock((draft.stock ?? 0) + 1)}
+                          style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, fontSize: 18, cursor: "pointer", flexShrink: 0 }}
+                        >
+                          +
+                        </button>
+                      </div>
+                    </Field>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <Field label="Precio pagado (opcional)">
+                      <input style={inputStyle} type="number" value={draft.precio} onChange={(e) => update("precio", e.target.value)} placeholder="Ej: 12000" />
+                    </Field>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : isAuthor ? (
             <>
               <div
                 onClick={() => fileInputRef.current?.click()}
@@ -766,25 +881,28 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
             </div>
           )}
 
-          <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 16 }}>
-            <Field label="Tu puntuación general">
-              <StarRating value={myRating} onChange={setMyRating} size={28} />
-            </Field>
+          {/* Favorito y puntuación general no forman parte del alta inicial. */}
+          {!isNew && (
+            <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 16 }}>
+              <Field label="Tu puntuación general">
+                <StarRating value={myRating} onChange={setMyRating} size={28} />
+              </Field>
 
-            {ratingsEntries.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <span style={{ fontSize: 13, color: MUTED, display: "block", marginBottom: 8 }}>Puntajes de los demás</span>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {ratingsEntries.map(([id, r]) => (
-                    <div key={id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 13.5, color: INK }}>{r.nombre}</span>
-                      <StarRating value={r.valor} onChange={() => {}} size={15} readOnly />
-                    </div>
-                  ))}
+              {ratingsEntries.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <span style={{ fontSize: 13, color: MUTED, display: "block", marginBottom: 8 }}>Puntajes de los demás</span>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {ratingsEntries.map(([id, r]) => (
+                      <div key={id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <span style={{ fontSize: 13.5, color: INK }}>{r.nombre}</span>
+                        <StarRating value={r.valor} onChange={() => {}} size={15} readOnly />
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {/* ---- Etapa 5: Tus experiencias ---- */}
           {!isNew && (
