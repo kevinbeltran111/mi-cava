@@ -1093,12 +1093,17 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
 
       {showPhotoZoom && draft.foto && (
         <div
-          onClick={() => setShowPhotoZoom(false)}
+          onClick={(e) => { e.stopPropagation(); setShowPhotoZoom(false); }}
           style={{ position: "fixed", inset: 0, background: "rgba(20,14,10,0.92)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, padding: 20, cursor: "zoom-out" }}
         >
-          <img src={draft.foto} alt="Foto ampliada" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 6 }} />
+          <img
+            src={draft.foto}
+            alt="Foto ampliada"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 6, cursor: "default" }}
+          />
           <button
-            onClick={() => setShowPhotoZoom(false)}
+            onClick={(e) => { e.stopPropagation(); setShowPhotoZoom(false); }}
             style={{ position: "absolute", top: 18, right: 18, background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 999, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", cursor: "pointer" }}
             aria-label="Cerrar"
           >
