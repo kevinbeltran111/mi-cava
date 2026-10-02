@@ -24,6 +24,21 @@ import { supabase } from "./supabaseClient";
 // mientras no tenemos el botón de Administración visible en pantalla.
 if (typeof window !== "undefined") window.supabase = supabase;
 
+// ========================================================================
+// INSTRUMENTACIÓN TEMPORAL DE DIAGNÓSTICO — UX-10 (P0)
+// Solo logging de lectura, no cambia ningún estado ni condición de render.
+// Remover este bloque y todos los llamados a dbg(...) una vez cerrado el
+// diagnóstico (buscar "UX10" para ubicarlos todos).
+// ========================================================================
+let __ux10Seq = 0;
+function dbg(label, data) {
+  __ux10Seq += 1;
+  const t = typeof performance !== "undefined" ? performance.now().toFixed(1) : Date.now();
+  // eslint-disable-next-line no-console
+  console.log(`[UX10 #${__ux10Seq} t=${t}ms] ${label}`, data !== undefined ? data : "");
+}
+// ========================================================================
+
 // ---- Palette ----
 const BORDEAUX = "#4A1420";
 const BORDEAUX_DARK = "#38101A";
@@ -1384,18 +1399,65 @@ export default function App() {
   const [showLogin, setShowLogin] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
 
+  // ---- INSTRUMENTACIÓN TEMPORAL UX-10 (diagnóstico, no toca lógica) ----
+  useEffect(() => {
+    dbg("APP_MOUNT");
+  }, []);
+
+  useEffect(() => {
+    dbg("SESSION_CHANGED", {
+      isUndefined: session === undefined,
+      isNull: session === null,
+      userId: session?.user?.id ?? null,
+    });
+  }, [session]);
+
+  useEffect(() => {
+    dbg("AUTHRESOLVED_CHANGED", { authResolved });
+  }, [authResolved]);
+
+  useEffect(() => {
+    dbg("PROFILE_CHANGED", {
+      isUndefined: profile === undefined,
+      isNull: profile === null,
+      role: profile?.role ?? null,
+    });
+  }, [profile]);
+  // ---- FIN bloque de logging de cambios de estado ----
+
   useEffect(() => {
     // getSession() es la única fuente que determina si ya terminamos de
     // resolver el estado inicial (authResolved). onAuthStateChange puede
     // disparar antes, con un valor todavía no confiable — sigue
     // actualizando `session` con normalidad, pero nunca decide por sí solo
     // que ya terminamos de resolver.
+    dbg("GETSESSION_START");
     supabase.auth
       .getSession()
-      .then(({ data }) => setSession(data.session))
-      .catch(() => setSession(null))
-      .finally(() => setAuthResolved(true));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+      .then(({ data, error }) => {
+        dbg("GETSESSION_RESULT", {
+          hasSession: !!data?.session,
+          userId: data?.session?.user?.id ?? null,
+          error: error?.message ?? null,
+        });
+        setSession(data.session);
+      })
+      .catch((err) => {
+        dbg("GETSESSION_CATCH_ERROR", { message: err?.message ?? String(err) });
+        setSession(null);
+      })
+      .finally(() => {
+        dbg("AUTHRESOLVED_SET_TRUE_CALLED");
+        setAuthResolved(true);
+      });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => {
+      dbg("ONAUTHSTATECHANGE", {
+        event: _event,
+        sessionIsNull: s === null,
+        userId: s?.user?.id ?? null,
+      });
+      setSession(s);
+    });
     return () => listener.subscription.unsubscribe();
   }, []);
 
@@ -1667,6 +1729,31 @@ export default function App() {
   const totalVinos = wines.length;
   const disponibles = wines.filter((w) => (w.stock ?? 0) > 0).length;
   const tomados = wines.filter((w) => (w.vecesConsumido ?? 0) > 0).length;
+
+  // ---- INSTRUMENTACIÓN TEMPORAL UX-10: qué rama de render se eligió ----
+  // Puramente diagnóstico — no reemplaza ni modifica las condiciones reales
+  // de abajo, solo las reproduce en una variable para loguearlas. Se loguea
+  // en cada pasada de render (no en un efecto) para no perderse frames que
+  // no lleguen a confirmarse visualmente.
+  const __ux10Branch = !authResolved
+    ? "AUTH_LOADING"
+    : session && profile === undefined
+    ? "PROFILE_LOADING"
+    : session && profile === null
+    ? "PROFILE_SETUP"
+    : !session
+    ? "PUBLIC_NO_SESSION"
+    : "AUTHENTICATED";
+  dbg("RENDER_BRANCH", {
+    branch: __ux10Branch,
+    authResolved,
+    sessionIsUndefined: session === undefined,
+    sessionIsNull: session === null,
+    userId: session?.user?.id ?? null,
+    profileIsUndefined: profile === undefined,
+    profileIsNull: profile === null,
+  });
+  // ---- FIN instrumentación de rama de render ----
 
   // Mientras authResolved sea false (getSession() todavía no terminó, con
   // éxito o con error), no renderizamos ningún estado de usuario (ni
