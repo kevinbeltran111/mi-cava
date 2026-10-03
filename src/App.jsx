@@ -448,6 +448,21 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
   // AGREGAR = incorporar stock, separada de ABRIR = consumir).
   const [showAgregarBotellaDialog, setShowAgregarBotellaDialog] = useState(false);
   const [cantidadAgregar, setCantidadAgregar] = useState(1);
+  // UX-08C.1: feedback de error de "+ Agregar botella", mostrado dentro del
+  // propio diálogo (ver AgregarBotellaDialog) en vez de depender del banner
+  // global, que queda tapado por este mismo modal.
+  const [agregarBotellaError, setAgregarBotellaError] = useState(null);
+
+  // ---- UX-11/12/13: error/estado en línea de guardar, eliminar y favorito ----
+  // Ninguno de estos reemplaza al banner global `saveError` (que sigue
+  // existiendo para errores de carga general) — son el feedback *principal*
+  // para acciones que ocurren con este modal abierto, donde ese banner queda
+  // tapado por el overlay (zIndex 50) y nunca llega a verse.
+  const [submitError, setSubmitError] = useState(null); // error de Guardar (alta o edición)
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+  const [togglingFavorito, setTogglingFavorito] = useState(false);
+  const [favoritoError, setFavoritoError] = useState(null);
 
   const loadExperiencias = async () => {
     if (isNew) return;
@@ -480,14 +495,24 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
   // submit completo de edición. Si `onToggleFavorito` confirma éxito,
   // actualiza localmente draft/persisted; si falla, no toca nada (el
   // corazón se queda como estaba, igual que onSave nunca muestra un dato
-  // falso ante error).
+  // falso ante error). UX-11/12/13: no optimista a propósito (se mantiene
+  // igual) — solo se agrega `togglingFavorito` para no permitir un segundo
+  // tap mientras la request está en vuelo, y un mensaje de error pequeño y
+  // visible dentro de la ficha ante fallo (antes solo existía el banner
+  // global, tapado por este mismo modal). Sin mensaje de éxito: el corazón
+  // cambiando ya es la confirmación.
   const handleToggleFavorito = async () => {
+    setTogglingFavorito(true);
+    setFavoritoError(null);
     const nuevoValor = !draft.favorito;
     const ok = await onToggleFavorito(draft.id, nuevoValor);
     if (ok) {
       setDraft((w) => ({ ...w, favorito: nuevoValor }));
       setPersisted((p) => (p ? { ...p, favorito: nuevoValor } : p));
+    } else {
+      setFavoritoError("No se pudo actualizar el favorito. Probá de nuevo.");
     }
+    setTogglingFavorito(false);
   };
 
   // UX-08C.1: "+ Agregar botella" (reposición) — suma `cantidad` al stock
@@ -496,9 +521,13 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
   // (ver onAgregarBotella en App: SELECT stock fresco → UPDATE), aceptando
   // el pequeño riesgo de concurrencia para esta beta. Solo se actualiza
   // draft/persisted si la escritura fue exitosa — ante error no se muestra
-  // ningún incremento ficticio.
+  // ningún incremento ficticio. UX-11/12/13: ante fallo, el diálogo se queda
+  // abierto con la cantidad ya elegida intacta (nada nuevo acá, ya
+  // funcionaba así) y ahora además muestra el motivo dentro del propio
+  // diálogo, en vez de depender del banner global tapado por este modal.
   const handleAgregarBotellaClick = async (cantidad) => {
     setAgregandoBotella(true);
+    setAgregarBotellaError(null);
     try {
       const nuevoStock = await onAgregarBotella(draft.id, cantidad);
       if (nuevoStock != null) {
@@ -506,6 +535,8 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
         setPersisted((p) => (p ? { ...p, stock: nuevoStock } : p));
         setShowAgregarBotellaDialog(false);
         setCantidadAgregar(1);
+      } else {
+        setAgregarBotellaError("No se pudo agregar la botella. Probá de nuevo.");
       }
     } finally {
       setAgregandoBotella(false);
@@ -529,9 +560,16 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
     await loadExperiencias();
   };
 
+  // UX-11/12/13 (P0): solo recarga el historial (y por lo tanto, solo se
+  // considera "guardado") cuando `onSaveExperiencia` confirma éxito. El
+  // resultado se devuelve tal cual a ExperienceRow, que es quien decide si
+  // sale de edición o se queda mostrando el error con lo ya escrito.
   const handleSaveExperienciaEdit = async (consumoId, data) => {
-    await onSaveExperiencia(consumoId, data);
-    await loadExperiencias();
+    const result = await onSaveExperiencia(consumoId, data);
+    if (result?.ok) {
+      await loadExperiencias();
+    }
+    return result;
   };
 
   const update = (key, val) => setDraft((w) => ({ ...w, [key]: val }));
@@ -689,22 +727,40 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
       ? experienciasPuntuadas.reduce((s, e) => s + Number(e.puntuacion), 0) / experienciasPuntuadas.length
       : null;
 
+  // UX-11/12/13 (P0): `onSave` ahora devuelve { ok, error } en vez de un
+  // booleano — ver handleSave en App. Regla: un error nunca cierra el modal
+  // ni descarta el draft/foto, en ningún caso (alta o edición). Si falla, nos
+  // quedamos exactamente donde estábamos (showEditForm sigue en true, draft
+  // intacto) y se muestra `submitError` inline, con Guardar disponible para
+  // reintentar sin perder nada de lo ya completado. El cierre del modal para
+  // un alta nueva exitosa lo sigue haciendo App (handleSave llama a
+  // setShowForm(false) solo cuando ok === true) — acá no hace falta tocar
+  // nada para ese caso.
   const handleSubmit = async () => {
     setSaving(true);
+    setSubmitError(null);
     try {
       // UX-08: la puntuación general (ratings) deja de ser una fuente activa
       // de escritura desde la UX — guardar una edición ya no dispara
       // onRate/handleRate como efecto colateral. La tabla, sus datos
       // históricos y la función handleRate quedan intactos, simplemente no
       // se llaman más desde aquí.
-      const ok = await onSave(draft, photoBlob, isNew);
-      if (ok && !isNew) {
-        // Vino existente guardado con éxito: no se cierra el modal, se
-        // vuelve a la ficha de consulta ya actualizada con lo recién
-        // guardado.
-        setPersisted({ ...draft });
-        setPhotoBlob(null);
-        setViewMode("view");
+      const result = await onSave(draft, photoBlob, isNew);
+      if (result?.ok) {
+        if (!isNew) {
+          // Vino existente guardado con éxito: no se cierra el modal, se
+          // vuelve a la ficha de consulta ya actualizada con lo recién
+          // guardado.
+          setPersisted({ ...draft });
+          setPhotoBlob(null);
+          setViewMode("view");
+        }
+        // isNew + éxito: App ya cierra el modal (handleSave), no hay nada
+        // más que hacer acá.
+      } else {
+        // Error (alta o edición): nos quedamos tal cual estábamos — ni
+        // showEditForm ni draft/photoBlob cambian — y mostramos el motivo.
+        setSubmitError(result?.error || "No se pudo guardar. Revisá tu conexión y probá de nuevo.");
       }
     } finally {
       setSaving(false);
@@ -719,7 +775,29 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
   const handleCancelEdit = () => {
     setDraft(persisted ? { ...persisted } : { ...wine });
     setPhotoBlob(null);
+    setSubmitError(null);
     setViewMode("view");
+  };
+
+  // UX-11/12/13 (P0/P1): eliminar solo cierra el modal tras éxito confirmado
+  // por el servidor. El diálogo de confirmación se queda abierto (con sus
+  // botones deshabilitados vía `confirming`) mientras `onDelete` está en
+  // vuelo, para que no se pueda disparar una segunda eliminación — no hace
+  // falta ninguna confirmación adicional, alcanza con bloquear esta. Ante
+  // error: se cierra solo el diálogo de confirmación (no el modal), el vino
+  // sigue existiendo y visible, y `deleteError` se muestra en el footer del
+  // formulario para poder reintentar.
+  const handleDeleteConfirm = async () => {
+    setDeleting(true);
+    setDeleteError(null);
+    const result = await onDelete(draft.id);
+    if (result?.ok) {
+      onCancel(); // el vino ya no existe — cierra el modal por completo
+    } else {
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+      setDeleteError(result?.error || "No se pudo eliminar el vino. Probá de nuevo.");
+    }
   };
 
   // UX-08C: un único listener de Escape, con prioridad de capas (de más alta
@@ -774,7 +852,8 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
             {!isNew && isAuthor && viewMode === "view" && (
               <button
                 onClick={handleToggleFavorito}
-                style={{ background: "none", border: "none", cursor: "pointer", color: draft.favorito ? DANGER : MUTED, padding: 4 }}
+                disabled={togglingFavorito}
+                style={{ background: "none", border: "none", cursor: togglingFavorito ? "default" : "pointer", color: draft.favorito ? DANGER : MUTED, padding: 4, opacity: togglingFavorito ? 0.5 : 1 }}
                 aria-label={draft.favorito ? "Quitar de favoritos" : "Marcar como favorito"}
               >
                 <Heart size={19} fill={draft.favorito ? DANGER : "none"} />
@@ -1113,6 +1192,12 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
               </div>
 
               <div className="ux08-ficha-info">
+                {/* UX-11/12/13 (P1): error pequeño del toggle de favorito —
+                    sin mensaje de éxito (el corazón cambiando ya alcanza),
+                    solo esto ante un fallo. */}
+                {favoritoError && (
+                  <p style={{ margin: "0 0 8px", fontSize: 12.5, color: DANGER }}>{favoritoError}</p>
+                )}
                 <h2 style={{ margin: 0, fontFamily: SERIF, fontSize: 21, color: BORDEAUX, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
                   {draft.nombre}
                   {draft.favorito && <Heart size={16} fill={DANGER} color={DANGER} />}
@@ -1158,7 +1243,7 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
                     </p>
                     {isAuthor && (
                       <button
-                        onClick={() => setShowAgregarBotellaDialog(true)}
+                        onClick={() => { setAgregarBotellaError(null); setShowAgregarBotellaDialog(true); }}
                         style={{ background: "none", border: "none", color: BORDEAUX, textDecoration: "underline", cursor: "pointer", fontSize: 13, padding: 0, fontWeight: 600, whiteSpace: "nowrap" }}
                       >
                         + Agregar botella
@@ -1279,28 +1364,45 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
         </div>
 
         {entryMode === "manual" && showEditForm && (
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderTop: `1px solid ${BORDER}` }}>
-          <div>
-            {!isNew && isAuthor && (
-              <button onClick={() => setShowDeleteConfirm(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: DANGER, cursor: "pointer", fontSize: 14, padding: "8px 4px" }}>
-                <Trash2 size={16} /> Eliminar
+        <div style={{ padding: "16px 20px", borderTop: `1px solid ${BORDER}`, display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* UX-11/12/13 (P0): error de Guardar/Eliminar, visible acá dentro
+              del modal — nunca cierra nada, siempre permite reintentar sin
+              perder el draft. Reemplaza al banner global como feedback
+              principal para estas dos acciones, que ocurren con el modal
+              abierto y por lo tanto lo tapan (zIndex 50). */}
+          {submitError && (
+            <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "9px 12px", borderRadius: 8, fontSize: 13 }}>
+              {submitError}
+            </div>
+          )}
+          {deleteError && (
+            <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "9px 12px", borderRadius: 8, fontSize: 13 }}>
+              {deleteError}
+            </div>
+          )}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              {!isNew && isAuthor && (
+                <button onClick={() => { setDeleteError(null); setShowDeleteConfirm(true); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: DANGER, cursor: "pointer", fontSize: 14, padding: "8px 4px" }}>
+                  <Trash2 size={16} /> Eliminar
+                </button>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              {/* UX-08: para un vino existente, Cancelar ya no cierra el modal
+                  — descarta los cambios y vuelve a la ficha de consulta. El
+                  alta (isNew) sigue cerrando todo con onCancel, sin cambios. */}
+              <button onClick={isNew ? onCancel : handleCancelEdit} style={{ padding: "10px 18px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 14 }}>
+                Cancelar
               </button>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            {/* UX-08: para un vino existente, Cancelar ya no cierra el modal
-                — descarta los cambios y vuelve a la ficha de consulta. El
-                alta (isNew) sigue cerrando todo con onCancel, sin cambios. */}
-            <button onClick={isNew ? onCancel : handleCancelEdit} style={{ padding: "10px 18px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 14 }}>
-              Cancelar
-            </button>
-            <button
-              disabled={isAuthor && !canSave}
-              onClick={handleSubmit}
-              style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: !isAuthor || canSave ? BORDEAUX : BORDER, color: !isAuthor || canSave ? CREAM : MUTED, cursor: !isAuthor || canSave ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 600 }}
-            >
-              {saving ? "Guardando..." : "Guardar"}
-            </button>
+              <button
+                disabled={isAuthor && !canSave}
+                onClick={handleSubmit}
+                style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: !isAuthor || canSave ? BORDEAUX : BORDER, color: !isAuthor || canSave ? CREAM : MUTED, cursor: !isAuthor || canSave ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 600 }}
+              >
+                {saving ? "Guardando..." : "Guardar"}
+              </button>
+            </div>
           </div>
         </div>
         )}
@@ -1318,9 +1420,10 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
       {showDeleteConfirm && (
         <ConfirmDialog
           message={"¿Eliminar este vino de Mi Cava?\nTambién se eliminará el historial asociado a este vino. Esta acción no se puede deshacer."}
-          confirmLabel="Eliminar"
+          confirmLabel={deleting ? "Eliminando..." : "Eliminar"}
           danger
-          onConfirm={() => { setShowDeleteConfirm(false); onDelete(draft.id); }}
+          confirming={deleting}
+          onConfirm={handleDeleteConfirm}
           onCancel={() => setShowDeleteConfirm(false)}
         />
       )}
@@ -1332,8 +1435,9 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
           cantidad={cantidadAgregar}
           onChangeCantidad={setCantidadAgregar}
           saving={agregandoBotella}
+          error={agregarBotellaError}
           onConfirm={() => handleAgregarBotellaClick(cantidadAgregar)}
-          onCancel={() => { setShowAgregarBotellaDialog(false); setCantidadAgregar(1); }}
+          onCancel={() => { setShowAgregarBotellaDialog(false); setCantidadAgregar(1); setAgregarBotellaError(null); }}
         />
       )}
 
@@ -1417,16 +1521,22 @@ function PhotoSourceSheet({ onCamera, onGallery, onCancel }) {
 }
 
 // ---------- Confirmación genérica ----------
-function ConfirmDialog({ message, confirmLabel = "Confirmar", danger = false, onConfirm, onCancel }) {
+// UX-11/12/13: `confirming` es opcional (default false) — cuando el llamador
+// lo pasa en true, deshabilita ambos botones y el cierre por click en el
+// fondo, para impedir una segunda confirmación mientras la primera sigue en
+// vuelo (hoy lo usa "Eliminar vino"; "Abrir una botella" no lo necesita
+// porque cierra el diálogo de forma sincrónica antes de llamar a la API, sin
+// cambios ahí).
+function ConfirmDialog({ message, confirmLabel = "Confirmar", danger = false, confirming = false, onConfirm, onCancel }) {
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 70 }} onClick={onCancel}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 70 }} onClick={confirming ? undefined : onCancel}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: CARD_BG, borderRadius: 14, padding: 24, maxWidth: 360, width: "100%", boxShadow: "0 20px 60px rgba(43,33,28,0.35)" }}>
         <p style={{ color: INK, fontSize: 14.5, lineHeight: 1.6, margin: "0 0 20px", whiteSpace: "pre-line" }}>{message}</p>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          <button onClick={onCancel} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 14 }}>
+          <button disabled={confirming} onClick={onCancel} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: confirming ? "default" : "pointer", fontSize: 14 }}>
             Cancelar
           </button>
-          <button onClick={onConfirm} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: danger ? DANGER : BORDEAUX, color: CREAM, cursor: "pointer", fontSize: 14, fontWeight: 600 }}>
+          <button disabled={confirming} onClick={onConfirm} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: danger ? DANGER : BORDEAUX, color: CREAM, cursor: confirming ? "default" : "pointer", fontSize: 14, fontWeight: 600 }}>
             {confirmLabel}
           </button>
         </div>
@@ -1437,13 +1547,21 @@ function ConfirmDialog({ message, confirmLabel = "Confirmar", danger = false, on
 
 // UX-08C.1: "¿Cuántas botellas querés agregar?" — stepper simple con mínimo 1,
 // usado exclusivamente por AGREGAR (incorporar stock), nunca por ABRIR.
-function AgregarBotellaDialog({ cantidad, onChangeCantidad, saving, onConfirm, onCancel }) {
+function AgregarBotellaDialog({ cantidad, onChangeCantidad, saving, error, onConfirm, onCancel }) {
   const dec = () => onChangeCantidad(Math.max(1, cantidad - 1));
   const inc = () => onChangeCantidad(cantidad + 1);
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 70 }} onClick={onCancel}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: CARD_BG, borderRadius: 14, padding: 24, maxWidth: 360, width: "100%", boxShadow: "0 20px 60px rgba(43,33,28,0.35)" }}>
         <p style={{ color: INK, fontSize: 14.5, lineHeight: 1.6, margin: "0 0 18px" }}>¿Cuántas botellas querés agregar?</p>
+        {/* UX-11/12/13: error dentro del propio diálogo — este modal se
+            dibuja por encima de todo lo demás (zIndex 70), así que es el
+            único lugar donde un fallo acá puede llegar a verse de verdad. */}
+        {error && (
+          <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "9px 12px", borderRadius: 8, fontSize: 13, marginBottom: 16 }}>
+            {error}
+          </div>
+        )}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 18, marginBottom: 22 }}>
           <button
             onClick={dec}
@@ -1482,14 +1600,25 @@ function ExperienceRow({ exp, onSave }) {
   const [comida, setComida] = useState(exp.comida || "");
   const [comentario, setComentario] = useState(exp.comentario || "");
   const [saving, setSaving] = useState(false);
+  // UX-11/12/13 (P0): antes se salía de edición incondicionalmente, incluso
+  // si `onSave` fallaba — descartando en silencio lo recién escrito. Ahora
+  // solo se sale de edición ante éxito confirmado; ante error, se preserva
+  // puntuación/comida/comentario tal como están (ya viven en este estado
+  // local, no hace falta tocarlos) y se muestra el motivo para reintentar.
+  const [error, setError] = useState(null);
 
   const isEmpty = !exp.puntuacion && !exp.comida && !exp.comentario;
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave(exp.id, { puntuacion: puntuacion > 0 ? puntuacion : null, comida: comida.trim() || null, comentario: comentario.trim() || null });
+    setError(null);
+    const result = await onSave(exp.id, { puntuacion: puntuacion > 0 ? puntuacion : null, comida: comida.trim() || null, comentario: comentario.trim() || null });
     setSaving(false);
-    setEditing(false);
+    if (result?.ok) {
+      setEditing(false);
+    } else {
+      setError(result?.error || "No se pudo guardar. Probá de nuevo.");
+    }
   };
 
   if (editing) {
@@ -1504,8 +1633,13 @@ function ExperienceRow({ exp, onSave }) {
         <Field label="Algo que quieras recordar">
           <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical", fontFamily: SANS }} value={comentario} onChange={(e) => setComentario(e.target.value)} />
         </Field>
+        {error && (
+          <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "8px 10px", borderRadius: 8, fontSize: 12.5, marginBottom: 12 }}>
+            {error}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button onClick={() => setEditing(false)} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 13 }}>
+          <button onClick={() => { setError(null); setEditing(false); }} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 13 }}>
             Cancelar
           </button>
           <button disabled={saving} onClick={handleSave} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
@@ -1856,6 +1990,14 @@ export default function App() {
   const [profile, setProfile] = useState(undefined);
   const [wines, setWines] = useState([]);
   const [loading, setLoading] = useState(true);
+  // UX-11/12/13 (P1): distingue la primera carga real (donde sí tiene
+  // sentido tapar toda la pantalla con el spinner, porque todavía no hay
+  // nada que mostrar) de cualquier recarga posterior — ya sea explícita
+  // (guardar, favorito, stock, abrir, eliminar) o disparada por realtime.
+  // Estas últimas ya NO deben esconder la grilla entera: se mantiene lo que
+  // ya está en pantalla mientras `loadWines()` trae datos frescos por
+  // detrás. No es estado (no necesita re-render propio), por eso es un ref.
+  const hasLoadedOnceRef = useRef(false);
   // UX-08C.1: protección contra llamadas a loadWines() solapadas (una
   // explícita + una o más disparadas por realtime, p. ej. al agregar botella
   // o abrir una). Cada llamada reserva un número de secuencia al empezar;
@@ -1983,7 +2125,14 @@ export default function App() {
   async function loadWines() {
     if (!session) return;
     const seq = ++loadSeqRef.current;
-    setLoading(true);
+    // UX-11/12/13 (P1): solo la primera carga real tapa la pantalla con el
+    // spinner de pantalla completa. Cualquier recarga posterior — guardar,
+    // favorito, stock, abrir una botella, eliminar, o disparada por
+    // realtime — mantiene la grilla actual visible mientras trae datos
+    // frescos por detrás, en vez de hacer desaparecer toda Mi Cava por un
+    // cambio chico.
+    const isFirstLoad = !hasLoadedOnceRef.current;
+    if (isFirstLoad) setLoading(true);
     const { data, error } = await supabase
       .from("wines")
       .select("*, profiles(nombre), ratings(user_id, valor, profiles(nombre))")
@@ -1997,6 +2146,7 @@ export default function App() {
       if (seq === loadSeqRef.current) {
         setSaveError(true);
         setLoading(false);
+        hasLoadedOnceRef.current = true;
       }
       return;
     }
@@ -2011,6 +2161,7 @@ export default function App() {
       if (seq === loadSeqRef.current) {
         setSaveError(true);
         setLoading(false);
+        hasLoadedOnceRef.current = true;
       }
       return;
     }
@@ -2022,16 +2173,37 @@ export default function App() {
     // cambio de schema/RLS, el promedio derivado de experiencias puntuadas
     // que ahora reemplaza a `ratings` como fuente visible de puntuación.
     const { data: consumosData, error: consError } = await supabase.from("consumos").select("wine_id, puntuacion").eq("user_id", session.user.id);
-    if (consError) console.error(consError);
-    const statsConsumos = {};
-    (consumosData || []).forEach((c) => {
-      if (!statsConsumos[c.wine_id]) statsConsumos[c.wine_id] = { total: 0, suma: 0, puntuados: 0 };
-      statsConsumos[c.wine_id].total += 1;
-      if (c.puntuacion != null) {
-        statsConsumos[c.wine_id].suma += Number(c.puntuacion);
-        statsConsumos[c.wine_id].puntuados += 1;
-      }
-    });
+    let statsConsumos = {};
+    if (consError) {
+      console.error(consError);
+      // UX-11/12/13 (P1): antes esto quedaba completamente silencioso y
+      // `statsConsumos` se calculaba igual como `{}` — mostrando "0
+      // consumos"/sin promedio para todos los vinos como si fuera un dato
+      // real, en vez de un fallo de carga. Ahora se avisa (reutilizando el
+      // banner global existente — no se crea un mecanismo nuevo) y se
+      // conservan las últimas estadísticas de consumo ya conocidas por vino,
+      // en vez de resetearlas a cero.
+      setSaveError(true);
+      statsConsumos = Object.fromEntries(
+        wines.map((w) => [
+          w.id,
+          {
+            total: w.vecesConsumido || 0,
+            suma: (w.experienciaPromedio || 0) * (w.experienciasPuntuadas || 0),
+            puntuados: w.experienciasPuntuadas || 0,
+          },
+        ])
+      );
+    } else {
+      (consumosData || []).forEach((c) => {
+        if (!statsConsumos[c.wine_id]) statsConsumos[c.wine_id] = { total: 0, suma: 0, puntuados: 0 };
+        statsConsumos[c.wine_id].total += 1;
+        if (c.puntuacion != null) {
+          statsConsumos[c.wine_id].suma += Number(c.puntuacion);
+          statsConsumos[c.wine_id].puntuados += 1;
+        }
+      });
+    }
 
     // UX-08C.1: si mientras se resolvían las consultas de arriba ya empezó
     // una llamada más nueva a loadWines() (p. ej. disparada por realtime),
@@ -2071,7 +2243,13 @@ export default function App() {
         };
       })
     );
+    // Una carga que llegó completa hasta acá (wines + wine_privado +
+    // consumos, los tres sin error) es la señal de que todo está al día de
+    // nuevo — limpia cualquier banner de error que hubiera quedado de un
+    // fallo anterior (de carga o de guardado).
+    if (!consError) setSaveError(false);
     setLoading(false);
+    hasLoadedOnceRef.current = true;
   }
 
   const handleCreateProfile = async (nombre) => {
@@ -2079,15 +2257,19 @@ export default function App() {
     if (!error) setProfile(data);
   };
 
-  // UX-08: para un vino existente, guardar con éxito ya no cierra el modal
-  // (WineModal se queda abierto y vuelve a su ficha de consulta); para un
-  // vino nuevo (isNewWine) el comportamiento es exactamente el de antes —
-  // cierra siempre. En caso de error, se cierra igual que antes en ambos
-  // casos (no se cambia el manejo de errores, fuera del alcance de esta
-  // tarea). Devuelve true/false para que WineModal sepa si el guardado fue
-  // exitoso.
+  // UX-11/12/13 (P0): un error acá YA NO cierra el modal, ni para alta
+  // nueva ni para edición — ese era el riesgo confirmado por auditoría (un
+  // guardado fallido podía descartar foto+IA+datos igual que si hubiera
+  // tenido éxito). Devuelve { ok, error } en vez de un booleano: WineModal
+  // (handleSubmit) decide qué hacer con cada caso, y el cierre del modal acá
+  // solo ocurre cuando `ok === true` — el caso de alta nueva con éxito sigue
+  // siendo el único lugar donde este archivo cierra el modal por sí mismo.
+  // Nota de alcance: el `wines.upsert` y el `wine_privado.upsert` no son una
+  // única operación atómica — si el primero tiene éxito y el segundo falla,
+  // queda un registro en `wines` sin su `wine_privado` (visible igual vía
+  // realtime aunque esta función reporte error). Documentado, no resuelto
+  // acá: requeriría una función RPC transaccional, fuera de este bloque.
   const handleSave = async (draft, photoBlob, isNewWine) => {
-    let ok = true;
     try {
       let foto_url = draft.foto && draft.foto.startsWith("http") ? draft.foto : null;
       if (photoBlob) {
@@ -2129,16 +2311,15 @@ export default function App() {
 
       setSaveError(false);
       await loadWines();
+      if (isNewWine) {
+        setShowForm(false);
+        setEditing(null);
+      }
+      return { ok: true };
     } catch (err) {
       console.error(err);
-      setSaveError(true);
-      ok = false;
+      return { ok: false, error: err.message || "No se pudo guardar el vino. Revisá tu conexión y probá de nuevo." };
     }
-    if (isNewWine || !ok) {
-      setShowForm(false);
-      setEditing(null);
-    }
-    return ok;
   };
 
   // ---- Etapa 5: Abrir una botella + experiencias ----
@@ -2150,12 +2331,18 @@ export default function App() {
     return { stock: row.stock, consumoId: row.consumo_id };
   };
 
+  // UX-11/12/13 (P0): antes esta función no comunicaba éxito/fracaso de
+  // ninguna forma — ExperienceRow salía de edición como si siempre hubiera
+  // funcionado, descartando en silencio lo escrito si `update` fallaba.
+  // Ahora devuelve { ok, error } para que ExperienceRow decida si cerrar la
+  // edición o quedarse con los datos ingresados y mostrar el motivo.
   const handleSaveExperiencia = async (consumoId, cambios) => {
     const { error } = await supabase.from("consumos").update(cambios).eq("id", consumoId);
     if (error) {
       console.error(error);
-      setSaveError(true);
+      return { ok: false, error: error.message || "No se pudo guardar la experiencia. Probá de nuevo." };
     }
+    return { ok: true };
   };
 
   // UX-08C: favorito directo desde la ficha — update acotado a esa única
@@ -2237,20 +2424,26 @@ export default function App() {
     }
   };
 
+  // UX-11/12/13 (P0/P1): antes esto cerraba el modal (`setShowForm(false)`)
+  // y borraba la foto del bucket incondicionalmente, incluso si el DELETE
+  // fallaba — dando la falsa impresión de que el vino se había eliminado.
+  // Ahora devuelve { ok, error }: el cierre del modal lo decide WineModal
+  // (handleDeleteConfirm) solo cuando ok === true, y la foto del bucket
+  // únicamente se borra si el vino realmente se eliminó (si no, borrar la
+  // foto dejaría al vino existente sin su imagen).
   const handleDelete = async (id) => {
     try {
       const { error } = await supabase.from("wines").delete().eq("id", id);
       if (error) throw error;
       await loadWines();
+      // Borrar la foto del bucket es solo prolijidad — si falla, no importa,
+      // el vino ya se borró igual.
+      supabase.storage.from(PHOTOS_BUCKET).remove([`${id}.jpg`]).catch(() => {});
+      return { ok: true };
     } catch (err) {
       console.error(err);
-      setSaveError(true);
+      return { ok: false, error: err.message || "No se pudo eliminar el vino. Probá de nuevo." };
     }
-    // Borrar la foto del bucket es solo prolijidad — si falla, no importa,
-    // el vino ya se borró igual.
-    supabase.storage.from(PHOTOS_BUCKET).remove([`${id}.jpg`]).catch(() => {});
-    setShowForm(false);
-    setEditing(null);
   };
 
   const uniqueValues = (key) =>
