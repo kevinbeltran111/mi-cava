@@ -431,9 +431,14 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
   const [expComentario, setExpComentario] = useState("");
   const [savingExperiencia, setSavingExperiencia] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  // UX-08C: estado de carga de "+ Agregar botella" (reposición), separado
+  // UX-08C.1: estado de carga de "+ Agregar botella" (reposición), separado
   // de `abriendo` (que es para registrar un consumo, acción distinta).
   const [agregandoBotella, setAgregandoBotella] = useState(false);
+  // UX-08C.1: selector de cantidad para "+ Agregar botella" — vive siempre
+  // en el resumen personal, independiente del stock actual (semántica
+  // AGREGAR = incorporar stock, separada de ABRIR = consumir).
+  const [showAgregarBotellaDialog, setShowAgregarBotellaDialog] = useState(false);
+  const [cantidadAgregar, setCantidadAgregar] = useState(1);
 
   const loadExperiencias = async () => {
     if (isNew) return;
@@ -476,19 +481,22 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
     }
   };
 
-  // UX-08C: "+ Agregar botella" (reposición) — suma 1 al stock existente sin
-  // crear un consumo ni un vino nuevo, y sin tocar precio/favorito. La
-  // resolución de stock+1 se hace en el cliente (ver onAgregarBotella en
-  // App), aceptando el pequeño riesgo de concurrencia para esta beta. Solo
-  // se actualiza draft/persisted si la escritura fue exitosa — ante error no
-  // se muestra ningún incremento ficticio.
-  const handleAgregarBotellaClick = async () => {
+  // UX-08C.1: "+ Agregar botella" (reposición) — suma `cantidad` al stock
+  // existente sin crear un consumo ni un vino nuevo, y sin tocar
+  // precio/favorito. La resolución de stock+cantidad se hace en el cliente
+  // (ver onAgregarBotella en App: SELECT stock fresco → UPDATE), aceptando
+  // el pequeño riesgo de concurrencia para esta beta. Solo se actualiza
+  // draft/persisted si la escritura fue exitosa — ante error no se muestra
+  // ningún incremento ficticio.
+  const handleAgregarBotellaClick = async (cantidad) => {
     setAgregandoBotella(true);
     try {
-      const nuevoStock = await onAgregarBotella(draft.id);
+      const nuevoStock = await onAgregarBotella(draft.id, cantidad);
       if (nuevoStock != null) {
         setDraft((w) => ({ ...w, stock: nuevoStock }));
         setPersisted((p) => (p ? { ...p, stock: nuevoStock } : p));
+        setShowAgregarBotellaDialog(false);
+        setCantidadAgregar(1);
       }
     } finally {
       setAgregandoBotella(false);
@@ -718,6 +726,10 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
       if (e.key !== "Escape") return;
       if (showPhotoZoom) { setShowPhotoZoom(false); return; }
       if (showPhotoSourceSheet) { setShowPhotoSourceSheet(false); return; }
+      // UX-08C.1: el selector de "+ Agregar botella" es otra capa superpuesta
+      // más — misma prioridad que confirmAbrir/showDeleteConfirm, cierra solo
+      // el diálogo sin tocar nada más.
+      if (showAgregarBotellaDialog) { setShowAgregarBotellaDialog(false); return; }
       if (confirmAbrir) { setConfirmAbrir(false); return; }
       if (showDeleteConfirm) { setShowDeleteConfirm(false); return; }
       if (isNew) return; // alta: sin cambios, fuera de alcance de esta tarea
@@ -727,7 +739,7 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPhotoZoom, showPhotoSourceSheet, confirmAbrir, showDeleteConfirm, isNew, showEditForm, persisted, wine, onCancel]);
+  }, [showPhotoZoom, showPhotoSourceSheet, showAgregarBotellaDialog, confirmAbrir, showDeleteConfirm, isNew, showEditForm, persisted, wine, onCancel]);
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 50 }} onClick={onCancel}>
@@ -1123,9 +1135,27 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
                       Tomado {experiencias.length} {experiencias.length === 1 ? "vez" : "veces"}
                     </p>
                   )}
-                  <p style={{ margin: 0, fontSize: 13, color: MUTED }}>
-                    {(draft.stock ?? 0) === 1 ? "1 botella disponible" : `${draft.stock ?? 0} botellas disponibles`}
-                  </p>
+                  {/* UX-08C.1: estado de stock + "+ Agregar botella" siempre
+                      juntos, siempre disponible sin importar el stock actual
+                      — AGREGAR (adquirir/incorporar) es una acción separada
+                      de ABRIR (consumir), nunca depende de tener stock. */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                    <p style={{ margin: 0, fontSize: 13, color: MUTED }}>
+                      {(draft.stock ?? 0) === 0
+                        ? "Sin botellas disponibles"
+                        : (draft.stock ?? 0) === 1
+                        ? "1 botella disponible"
+                        : `${draft.stock ?? 0} botellas disponibles`}
+                    </p>
+                    {isAuthor && (
+                      <button
+                        onClick={() => setShowAgregarBotellaDialog(true)}
+                        style={{ background: "none", border: "none", color: BORDEAUX, textDecoration: "underline", cursor: "pointer", fontSize: 13, padding: 0, fontWeight: 600, whiteSpace: "nowrap" }}
+                      >
+                        + Agregar botella
+                      </button>
+                    )}
+                  </div>
                   {draft.precio != null && draft.precio !== "" && (
                     <p style={{ margin: 0, fontSize: 13, color: MUTED }}>
                       Precio pagado: ${Number(draft.precio).toLocaleString("es-AR")}
@@ -1138,8 +1168,13 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
 
           {/* ---- Etapa 5: Abrir una botella ---- */}
           {/* UX-08C: visible solo en la ficha de consulta, ya no en el
-              formulario de edición (antes se mostraba en ambos). */}
-          {!isNew && isAuthor && !showEditForm && (
+              formulario de edición. UX-08C.1: con stock = 0 el bloque
+              desaparece por completo (ya no se muestra deshabilitado) — el
+              estado sin stock y la reposición quedan explicados arriba, en
+              el resumen. Se mantiene igual cuando hay un `abrirResultado`
+              pendiente de responder, aunque la apertura haya dejado el
+              stock en 0 (para no cortar ese paso a mitad de camino). */}
+          {!isNew && isAuthor && !showEditForm && (abrirResultado || (draft.stock ?? 0) > 0) && (
             <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 4 }}>
               {abrirResultado ? (
                 abrirResultado.error ? (
@@ -1172,19 +1207,16 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
                   </div>
                 )
               ) : (
+                // UX-08C.1: este bloque solo se renderiza cuando stock > 0
+                // (ver condición del bloque completo más arriba), así que el
+                // botón ya no necesita su variante deshabilitada/sin-stock.
                 <button
-                  disabled={(draft.stock ?? 0) <= 0 || abriendo}
+                  disabled={abriendo}
                   onClick={() => setConfirmAbrir(true)}
-                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 0", borderRadius: 10, border: "none", background: (draft.stock ?? 0) > 0 ? GOLD : BORDER, color: (draft.stock ?? 0) > 0 ? BORDEAUX_DARK : MUTED, fontWeight: 700, fontSize: 15, cursor: (draft.stock ?? 0) > 0 ? "pointer" : "not-allowed" }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 0", borderRadius: 10, border: "none", background: GOLD, color: BORDEAUX_DARK, fontWeight: 700, fontSize: 15, cursor: abriendo ? "default" : "pointer" }}
                 >
-                  {abriendo ? (
-                    <Loader2 size={17} style={{ animation: "spin 0.8s linear infinite" }} />
-                  ) : (draft.stock ?? 0) > 0 ? (
-                    <Wine size={18} />
-                  ) : (
-                    <WineOff size={18} />
-                  )}
-                  {(draft.stock ?? 0) > 0 ? "Abrir una botella" : "Sin botellas disponibles"}
+                  {abriendo ? <Loader2 size={17} style={{ animation: "spin 0.8s linear infinite" }} /> : <Wine size={18} />}
+                  Abrir una botella
                 </button>
               )}
             </div>
@@ -1211,77 +1243,24 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
           {!isNew && (
             <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 16 }}>
               <h3 style={{ fontFamily: SERIF, fontSize: 15, color: INK, margin: "0 0 10px" }}>Tus experiencias</h3>
+              {/* UX-08C.1: "Tus experiencias" vuelve a ser puramente
+                  historial — AGREGAR (stock) vive en el resumen, ABRIR
+                  (consumir) vive en su propio bloque de arriba. Sin ningún
+                  CTA acá, para no confundir "incorporar" con "consumir". */}
               {experiencias === null ? (
                 <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}>
                   <Loader2 size={18} color={MUTED} style={{ animation: "spin 0.8s linear infinite" }} />
                 </div>
               ) : experiencias.length === 0 ? (
                 <>
-                  {/* UX-08C: el copy y el CTA dependen del stock — reutilizan
-                      exactamente el mismo flujo que el botón principal
-                      (setConfirmAbrir) o, sin stock, la misma función de
-                      reposición del "+ Agregar botella" de más abajo. Nunca
-                      se muestra un CTA de registrar deshabilitado. */}
-                  <p style={{ margin: "0 0 4px", color: MUTED, fontSize: 13 }}>
-                    {(draft.stock ?? 0) > 0
-                      ? "Todavía no registraste ninguna botella de este vino."
-                      : "No tenés botellas disponibles."}
-                  </p>
-                  <p style={{ margin: "0 0 12px", color: MUTED, fontSize: 13 }}>
-                    {(draft.stock ?? 0) > 0
-                      ? "Cuando lo tomes, registralo para empezar a construir tu historial."
-                      : "Si volviste a comprar este vino, agregá una a tu cava."}
-                  </p>
-                  {isAuthor && (
-                    (draft.stock ?? 0) > 0 ? (
-                      <button
-                        onClick={() => setConfirmAbrir(true)}
-                        style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}
-                      >
-                        Registrar una botella
-                      </button>
-                    ) : (
-                      <button
-                        disabled={agregandoBotella}
-                        onClick={handleAgregarBotellaClick}
-                        style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: agregandoBotella ? "default" : "pointer", fontSize: 13.5, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}
-                      >
-                        {agregandoBotella && <Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} />}
-                        + Agregar botella
-                      </button>
-                    )
-                  )}
+                  <p style={{ margin: "0 0 4px", color: MUTED, fontSize: 13 }}>Todavía no registraste ninguna experiencia con este vino.</p>
+                  <p style={{ margin: 0, color: MUTED, fontSize: 13 }}>Cuando abras una botella, podés contar cómo estuvo.</p>
                 </>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {experiencias.map((exp) => (
                     <ExperienceRow key={exp.id} exp={exp} onSave={handleSaveExperienciaEdit} />
                   ))}
-                  {isAuthor && (
-                    <div style={{ marginTop: 4 }}>
-                      {(draft.stock ?? 0) > 0 ? (
-                        <button
-                          onClick={() => setConfirmAbrir(true)}
-                          style={{ background: "none", border: "none", color: BORDEAUX, textDecoration: "underline", cursor: "pointer", fontSize: 13, padding: 0, fontWeight: 600 }}
-                        >
-                          + Registrar otra botella
-                        </button>
-                      ) : (
-                        <div style={{ background: CREAM, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "10px 12px" }}>
-                          <p style={{ margin: "0 0 2px", fontSize: 12.5, color: MUTED }}>No tenés botellas disponibles.</p>
-                          <p style={{ margin: "0 0 8px", fontSize: 12.5, color: MUTED }}>Si volviste a comprar este vino, agregá una a tu cava.</p>
-                          <button
-                            disabled={agregandoBotella}
-                            onClick={handleAgregarBotellaClick}
-                            style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: agregandoBotella ? "default" : "pointer", fontSize: 13, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}
-                          >
-                            {agregandoBotella && <Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} />}
-                            + Agregar botella
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               )}
             </div>
@@ -1334,6 +1313,18 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
           danger
           onConfirm={() => { setShowDeleteConfirm(false); onDelete(draft.id); }}
           onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
+      {/* UX-08C.1: selector de cantidad para "+ Agregar botella" — acción de
+          incorporar stock, separada de "Abrir una botella" (consumir). */}
+      {showAgregarBotellaDialog && (
+        <AgregarBotellaDialog
+          cantidad={cantidadAgregar}
+          onChangeCantidad={setCantidadAgregar}
+          saving={agregandoBotella}
+          onConfirm={() => handleAgregarBotellaClick(cantidadAgregar)}
+          onCancel={() => { setShowAgregarBotellaDialog(false); setCantidadAgregar(1); }}
         />
       )}
 
@@ -1428,6 +1419,46 @@ function ConfirmDialog({ message, confirmLabel = "Confirmar", danger = false, on
           </button>
           <button onClick={onConfirm} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: danger ? DANGER : BORDEAUX, color: CREAM, cursor: "pointer", fontSize: 14, fontWeight: 600 }}>
             {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// UX-08C.1: "¿Cuántas botellas querés agregar?" — stepper simple con mínimo 1,
+// usado exclusivamente por AGREGAR (incorporar stock), nunca por ABRIR.
+function AgregarBotellaDialog({ cantidad, onChangeCantidad, saving, onConfirm, onCancel }) {
+  const dec = () => onChangeCantidad(Math.max(1, cantidad - 1));
+  const inc = () => onChangeCantidad(cantidad + 1);
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 70 }} onClick={onCancel}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: CARD_BG, borderRadius: 14, padding: 24, maxWidth: 360, width: "100%", boxShadow: "0 20px 60px rgba(43,33,28,0.35)" }}>
+        <p style={{ color: INK, fontSize: 14.5, lineHeight: 1.6, margin: "0 0 18px" }}>¿Cuántas botellas querés agregar?</p>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 18, marginBottom: 22 }}>
+          <button
+            onClick={dec}
+            disabled={cantidad <= 1}
+            style={{ width: 38, height: 38, borderRadius: 999, border: `1px solid ${BORDER}`, background: "none", color: cantidad <= 1 ? MUTED : INK, cursor: cantidad <= 1 ? "default" : "pointer", fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}
+            aria-label="Restar"
+          >
+            −
+          </button>
+          <span style={{ fontSize: 22, fontWeight: 700, color: INK, minWidth: 32, textAlign: "center" }}>{cantidad}</span>
+          <button
+            onClick={inc}
+            style={{ width: 38, height: 38, borderRadius: 999, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}
+            aria-label="Sumar"
+          >
+            +
+          </button>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button onClick={onCancel} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 14 }}>
+            Cancelar
+          </button>
+          <button disabled={saving} onClick={onConfirm} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: saving ? "default" : "pointer", fontSize: 14, fontWeight: 600 }}>
+            {saving ? "Agregando..." : "Agregar"}
           </button>
         </div>
       </div>
@@ -1816,6 +1847,12 @@ export default function App() {
   const [profile, setProfile] = useState(undefined);
   const [wines, setWines] = useState([]);
   const [loading, setLoading] = useState(true);
+  // UX-08C.1: protección contra llamadas a loadWines() solapadas (una
+  // explícita + una o más disparadas por realtime, p. ej. al agregar botella
+  // o abrir una). Cada llamada reserva un número de secuencia al empezar;
+  // si al terminar ya no es la más reciente, se descarta su resultado para
+  // que una respuesta vieja nunca pueda pisar a una más nueva.
+  const loadSeqRef = useRef(0);
   const [saveError, setSaveError] = useState(false);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("reciente");
@@ -1936,6 +1973,7 @@ export default function App() {
 
   async function loadWines() {
     if (!session) return;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     const { data, error } = await supabase
       .from("wines")
@@ -1945,8 +1983,12 @@ export default function App() {
 
     if (error) {
       console.error(error);
-      setSaveError(true);
-      setLoading(false);
+      // UX-08C.1: una llamada vieja no debe pisar el estado de error de una
+      // más nueva que ya esté en curso o haya terminado.
+      if (seq === loadSeqRef.current) {
+        setSaveError(true);
+        setLoading(false);
+      }
       return;
     }
 
@@ -1957,8 +1999,10 @@ export default function App() {
 
     if (privError) {
       console.error(privError);
-      setSaveError(true);
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        setSaveError(true);
+        setLoading(false);
+      }
       return;
     }
 
@@ -1979,6 +2023,12 @@ export default function App() {
         statsConsumos[c.wine_id].puntuados += 1;
       }
     });
+
+    // UX-08C.1: si mientras se resolvían las consultas de arriba ya empezó
+    // una llamada más nueva a loadWines() (p. ej. disparada por realtime),
+    // esta respuesta quedó obsoleta — se descarta sin tocar wines/loading,
+    // para que nunca pueda pisar un resultado más reciente.
+    if (seq !== loadSeqRef.current) return;
 
     setWines(
       (data || []).map((w) => {
@@ -2119,17 +2169,21 @@ export default function App() {
     return true;
   };
 
-  // UX-08C: "+ Agregar botella" (reposición) — suma 1 al stock existente sin
-  // crear un consumo ni un vino nuevo. Sin RPC/migración: se lee el stock
-  // fresco de wine_privado (no el que tenga en memoria el WineModal, que
-  // puede estar desactualizado) y se escribe stock+1 en un UPDATE que toca
-  // únicamente esa columna — precio y favorito quedan intactos. Esto no es
-  // perfectamente atómico (dos escrituras casi simultáneas podrían pisarse),
-  // riesgo aceptado conscientemente para esta beta; la única forma de
-  // garantizarlo del todo sería una función de Postgres dedicada, que no se
-  // crea en esta tarea. Devuelve el stock nuevo, o null si falló (para que
-  // WineModal nunca muestre un incremento ficticio).
-  const handleAgregarBotella = async (wineId) => {
+  // UX-08C.1: "+ Agregar botella" (reposición) — suma `cantidad` (>= 1) al
+  // stock existente sin crear un consumo ni un vino nuevo. Siempre
+  // disponible sin importar el stock actual: AGREGAR (adquirir/incorporar)
+  // es una acción separada de ABRIR (consumir). Sin RPC/migración: se lee
+  // el stock fresco de wine_privado (no el que tenga en memoria el
+  // WineModal, que puede estar desactualizado) y se escribe stock+cantidad
+  // en un UPDATE que toca únicamente esa columna — precio y favorito quedan
+  // intactos. Esto no es perfectamente atómico (dos escrituras casi
+  // simultáneas podrían pisarse), riesgo aceptado conscientemente para esta
+  // beta; la única forma de garantizarlo del todo sería una función de
+  // Postgres dedicada, que no se crea en esta tarea. Devuelve el stock
+  // nuevo, o null si falló (para que WineModal nunca muestre un incremento
+  // ficticio).
+  const handleAgregarBotella = async (wineId, cantidad = 1) => {
+    const cantidadSegura = Math.max(1, Math.trunc(cantidad) || 1);
     const { data: actual, error: readError } = await supabase
       .from("wine_privado")
       .select("stock")
@@ -2144,7 +2198,7 @@ export default function App() {
 
     const { data: actualizado, error: writeError } = await supabase
       .from("wine_privado")
-      .update({ stock: (actual.stock ?? 0) + 1 })
+      .update({ stock: (actual.stock ?? 0) + cantidadSegura })
       .eq("wine_id", wineId)
       .eq("user_id", session.user.id)
       .select("stock")
