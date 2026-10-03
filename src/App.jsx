@@ -210,6 +210,44 @@ function composeOrigen(lugar, region) {
   return l || r || "";
 }
 
+// UX-19: normalización estricta para comparar nombre/bodega al detectar
+// posibles duplicados. Minúsculas, sin acentos/diacríticos, espacios
+// colapsados y sin puntuación simple. No es una normalización "difusa":
+// no reordena palabras, no corrige errores de tipeo, no usa sinónimos.
+function normalizarTexto(s) {
+  return (s || "")
+    .toString()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[.,;:!¡?¿'"()\[\]{}]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// UX-19: detección estricta de posibles duplicados dentro de la cava del
+// usuario, evaluada únicamente al guardar un vino NUEVO. Coincide solo por
+// nombre + bodega (normalizados) + añada exacta. El varietal NO participa
+// del matching. Si falta la añada en el borrador o en el vino existente,
+// o si las añadas difieren, no se considera coincidencia. No hay matching
+// difuso ni asistido por IA. Devuelve un array con todos los vinos
+// existentes que coinciden (0, 1, o más de uno).
+function findDuplicateMatches(draft, existingWines) {
+  const nombreDraft = normalizarTexto(draft?.nombre);
+  const bodegaDraft = normalizarTexto(draft?.bodega);
+  const anadaDraft = draft?.anada != null && draft.anada !== "" ? String(draft.anada).trim() : "";
+
+  if (!nombreDraft || !bodegaDraft || !anadaDraft) return [];
+
+  return (existingWines || []).filter((w) => {
+    const anadaExistente = w?.anada != null && w.anada !== "" ? String(w.anada).trim() : "";
+    if (!anadaExistente || anadaExistente !== anadaDraft) return false;
+    if (normalizarTexto(w?.nombre) !== nombreDraft) return false;
+    if (normalizarTexto(w?.bodega) !== bodegaDraft) return false;
+    return true;
+  });
+}
+
 // ---------- Login (link mágico) ----------
 function LoginModal({ onClose }) {
   const [email, setEmail] = useState("");
@@ -395,7 +433,7 @@ function ProfileSetup({ onSubmit }) {
 }
 
 // ---------- Wine form/detail modal ----------
-function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDelete, onRate, onAbrir, onSaveExperiencia, onToggleFavorito, onAgregarBotella, onCancel }) {
+function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines, onSave, onDelete, onRate, onAbrir, onSaveExperiencia, onToggleFavorito, onAgregarBotella, onCancel }) {
   const isNew = !wine;
   const isAuthor = isNew || (wine.userId === myUserId && canEdit);
   // UX-08: separa consulta (ficha de solo lectura) de edición dentro del
@@ -463,6 +501,14 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
   const [deleteError, setDeleteError] = useState(null);
   const [togglingFavorito, setTogglingFavorito] = useState(false);
   const [favoritoError, setFavoritoError] = useState(null);
+
+  // ---- UX-19: prevención de vinos duplicados (solo relevante para altas) ----
+  // `duplicateMatch` es el vino existente detectado como posible duplicado al
+  // pulsar Guardar en un alta nueva; mientras está seteado, el modal muestra
+  // la pantalla "Ya está en tu cava" en lugar de la revisión de datos normal.
+  const [duplicateMatch, setDuplicateMatch] = useState(null);
+  const [addingToExisting, setAddingToExisting] = useState(false);
+  const [addToExistingError, setAddToExistingError] = useState(null);
 
   const loadExperiencias = async () => {
     if (isNew) return;
@@ -736,7 +782,7 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
   // un alta nueva exitosa lo sigue haciendo App (handleSave llama a
   // setShowForm(false) solo cuando ok === true) — acá no hace falta tocar
   // nada para ese caso.
-  const handleSubmit = async () => {
+  const performSave = async () => {
     setSaving(true);
     setSubmitError(null);
     try {
@@ -764,6 +810,61 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  // UX-19: punto de entrada de "Guardar" para un alta nueva. Solo en ese
+  // caso (nunca en edición de un vino existente) se evalúa primero si hay
+  // una coincidencia estricta en la cava actual. Si hay exactamente una
+  // coincidencia, se detiene el guardado y se muestra la pantalla "Ya está
+  // en tu cava" en su lugar. Si no hay ninguna, o si hay más de una (caso
+  // de duplicados preexistentes, no resuelto automáticamente por ahora),
+  // se procede con el guardado normal sin mostrar advertencia.
+  const handleSubmit = async () => {
+    if (isNew) {
+      const matches = findDuplicateMatches(draft, existingWines);
+      if (matches.length === 1) {
+        setDuplicateMatch(matches[0]);
+        return;
+      }
+    }
+    await performSave();
+  };
+
+  // UX-19: "Guardar como otro vino" — continúa el alta normal sin volver a
+  // evaluar duplicados en este mismo intento (evita el loop de advertencia).
+  const handleSaveAsNew = async () => {
+    setDuplicateMatch(null);
+    await performSave();
+  };
+
+  // UX-19: "Agregar a este vino" — nunca crea una fila nueva en `wines`.
+  // Reutiliza `onAgregarBotella` para sumar stock al vino existente
+  // detectado como duplicado, preservando su identidad e historial
+  // (consumos/experiencias) intactos. Si el draft nuevo trae un precio
+  // cargado, se actualiza también el precio del vino existente en la MISMA
+  // operación de escritura que el stock (ver handleAgregarBotella en App),
+  // para no comprometer la atomicidad del stock. Si el draft no trae
+  // precio, el precio existente queda sin tocar. Si falla, el modal de alta
+  // permanece abierto, con el draft intacto, mostrando un error reintentable.
+  const handleAddToExisting = async () => {
+    if (!duplicateMatch) return;
+    setAddingToExisting(true);
+    setAddToExistingError(null);
+    try {
+      const precioDraft = draft.precio !== "" && draft.precio != null ? Number(draft.precio) : null;
+      const nuevoPrecio = precioDraft != null && !Number.isNaN(precioDraft) ? precioDraft : null;
+      const nuevoStock = await onAgregarBotella(duplicateMatch.id, draft.stock, nuevoPrecio);
+      if (nuevoStock == null) {
+        setAddToExistingError("No se pudo agregar la botella al vino existente. Probá de nuevo.");
+        return;
+      }
+      onCancel();
+    } catch (err) {
+      console.error(err);
+      setAddToExistingError("No se pudo agregar la botella al vino existente. Probá de nuevo.");
+    } finally {
+      setAddingToExisting(false);
     }
   };
 
@@ -986,7 +1087,50 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
             </div>
           )}
           {showEditForm ? (
-          isNew ? (
+          isNew && duplicateMatch ? (
+            <>
+              {/* UX-19: pantalla en línea "Ya está en tu cava" — se muestra en
+                  lugar de "Revisá los datos" cuando, al pulsar Guardar en un
+                  alta nueva, se detectó exactamente un vino existente con el
+                  mismo nombre + bodega (normalizados) + añada. No crea una
+                  fila nueva en `wines`: las dos acciones de abajo reutilizan
+                  o continúan el flujo existente. */}
+              <p style={{ margin: "0 0 14px", fontFamily: SERIF, fontSize: 17, color: BORDEAUX, fontWeight: 700, textAlign: "center" }}>
+                Este vino ya está en tu cava
+              </p>
+
+              {duplicateMatch.foto && (
+                <div style={{ marginBottom: 18 }}>
+                  <img
+                    src={duplicateMatch.foto}
+                    alt={duplicateMatch.nombre}
+                    style={{ width: "100%", height: 190, objectFit: "cover", borderRadius: 10, display: "block" }}
+                  />
+                </div>
+              )}
+
+              <div style={{ background: CREAM, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "14px 16px", marginBottom: 16, fontSize: 14, color: INK, lineHeight: 1.7 }}>
+                <p style={{ margin: 0, fontWeight: 700 }}>{duplicateMatch.nombre}</p>
+                <p style={{ margin: 0, color: MUTED }}>{duplicateMatch.bodega} · {duplicateMatch.anada}</p>
+                <p style={{ margin: "8px 0 0" }}>Stock actual: <strong>{duplicateMatch.stock ?? 0}</strong></p>
+                <p style={{ margin: 0 }}>Veces tomado: <strong>{duplicateMatch.vecesConsumido ?? 0}</strong></p>
+                <p style={{ margin: 0 }}>Cantidad a incorporar: <strong>{draft.stock ?? 0}</strong></p>
+                {draft.precio !== "" && draft.precio != null && (
+                  <p style={{ margin: "8px 0 0", paddingTop: 8, borderTop: `1px solid ${BORDER}` }}>
+                    Precio pagado: <strong>${draft.precio}</strong>
+                    <br />
+                    <span style={{ color: MUTED, fontSize: 12.5 }}>Al agregarla, este será el precio que figure en tu ficha.</span>
+                  </p>
+                )}
+              </div>
+
+              {addToExistingError && (
+                <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "9px 12px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+                  {addToExistingError}
+                </div>
+              )}
+            </>
+          ) : isNew ? (
             <>
               <p style={{ margin: "0 0 14px", fontFamily: SERIF, fontSize: 17, color: BORDEAUX, fontWeight: 700, textAlign: "center" }}>
                 Revisá los datos
@@ -1380,6 +1524,27 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
               {deleteError}
             </div>
           )}
+          {isNew && duplicateMatch ? (
+            // UX-19: en la pantalla "Ya está en tu cava" las acciones
+            // reemplazan a Cancelar/Guardar — no se muestra Eliminar (es un
+            // alta nueva, todavía no hay nada guardado de este intento).
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button
+                disabled={addingToExisting}
+                onClick={handleAddToExisting}
+                style={{ padding: "11px 0", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: addingToExisting ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 600, opacity: addingToExisting ? 0.7 : 1 }}
+              >
+                {addingToExisting ? "Agregando..." : "Agregar a este vino"}
+              </button>
+              <button
+                disabled={addingToExisting}
+                onClick={handleSaveAsNew}
+                style={{ padding: "11px 0", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: addingToExisting ? "not-allowed" : "pointer", fontSize: 14 }}
+              >
+                Guardar como otro vino
+              </button>
+            </div>
+          ) : (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
               {!isNew && isAuthor && (
@@ -1404,6 +1569,7 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
               </button>
             </div>
           </div>
+          )}
         </div>
         )}
       </div>
@@ -2395,7 +2561,15 @@ export default function App() {
   // Postgres dedicada, que no se crea en esta tarea. Devuelve el stock
   // nuevo, o null si falló (para que WineModal nunca muestre un incremento
   // ficticio).
-  const handleAgregarBotella = async (wineId, cantidad = 1) => {
+  // UX-19: `nuevoPrecio` es un parámetro opcional, usado solo por el flujo
+  // de "Agregar a este vino" (duplicado detectado en un alta nueva) para
+  // actualizar también el precio del vino existente. Se incluye en el MISMO
+  // `.update()` que el stock —un único UPDATE de Postgres sobre una sola
+  // fila no puede aplicarse parcialmente entre sus propias columnas— así
+  // que esto no compromete la atomicidad del stock ni requiere una RPC
+  // nueva. Todos los demás llamados existentes (que solo pasan wineId y
+  // cantidad) siguen funcionando igual que antes.
+  const handleAgregarBotella = async (wineId, cantidad = 1, nuevoPrecio = null) => {
     const cantidadSegura = Math.max(1, Math.trunc(cantidad) || 1);
     const { data: actual, error: readError } = await supabase
       .from("wine_privado")
@@ -2409,9 +2583,14 @@ export default function App() {
       return null;
     }
 
+    const updatePayload = { stock: (actual.stock ?? 0) + cantidadSegura };
+    if (nuevoPrecio != null && !Number.isNaN(nuevoPrecio)) {
+      updatePayload.precio = nuevoPrecio;
+    }
+
     const { data: actualizado, error: writeError } = await supabase
       .from("wine_privado")
-      .update({ stock: (actual.stock ?? 0) + cantidadSegura })
+      .update(updatePayload)
       .eq("wine_id", wineId)
       .eq("user_id", session.user.id)
       .select("stock")
@@ -2815,6 +2994,7 @@ export default function App() {
           myName={profile.nombre}
           canEdit={canEdit}
           accessToken={session.access_token}
+          existingWines={wines}
           onSave={handleSave}
           onDelete={handleDelete}
           onRate={handleRate}
