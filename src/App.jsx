@@ -386,7 +386,7 @@ function ProfileSetup({ onSubmit }) {
 }
 
 // ---------- Wine form/detail modal ----------
-function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDelete, onRate, onAbrir, onSaveExperiencia, onCancel }) {
+function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDelete, onRate, onAbrir, onSaveExperiencia, onToggleFavorito, onAgregarBotella, onCancel }) {
   const isNew = !wine;
   const isAuthor = isNew || (wine.userId === myUserId && canEdit);
   // UX-08: separa consulta (ficha de solo lectura) de edición dentro del
@@ -431,6 +431,9 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
   const [expComentario, setExpComentario] = useState("");
   const [savingExperiencia, setSavingExperiencia] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // UX-08C: estado de carga de "+ Agregar botella" (reposición), separado
+  // de `abriendo` (que es para registrar un consumo, acción distinta).
+  const [agregandoBotella, setAgregandoBotella] = useState(false);
 
   const loadExperiencias = async () => {
     if (isNew) return;
@@ -456,6 +459,39 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
       setAbrirResultado({ error: err.message || "No se pudo registrar la apertura" });
     } finally {
       setAbriendo(false);
+    }
+  };
+
+  // UX-08C: toggle de favorito directo desde la ficha, sin pasar por el
+  // submit completo de edición. Si `onToggleFavorito` confirma éxito,
+  // actualiza localmente draft/persisted; si falla, no toca nada (el
+  // corazón se queda como estaba, igual que onSave nunca muestra un dato
+  // falso ante error).
+  const handleToggleFavorito = async () => {
+    const nuevoValor = !draft.favorito;
+    const ok = await onToggleFavorito(draft.id, nuevoValor);
+    if (ok) {
+      setDraft((w) => ({ ...w, favorito: nuevoValor }));
+      setPersisted((p) => (p ? { ...p, favorito: nuevoValor } : p));
+    }
+  };
+
+  // UX-08C: "+ Agregar botella" (reposición) — suma 1 al stock existente sin
+  // crear un consumo ni un vino nuevo, y sin tocar precio/favorito. La
+  // resolución de stock+1 se hace en el cliente (ver onAgregarBotella en
+  // App), aceptando el pequeño riesgo de concurrencia para esta beta. Solo
+  // se actualiza draft/persisted si la escritura fue exitosa — ante error no
+  // se muestra ningún incremento ficticio.
+  const handleAgregarBotellaClick = async () => {
+    setAgregandoBotella(true);
+    try {
+      const nuevoStock = await onAgregarBotella(draft.id);
+      if (nuevoStock != null) {
+        setDraft((w) => ({ ...w, stock: nuevoStock }));
+        setPersisted((p) => (p ? { ...p, stock: nuevoStock } : p));
+      }
+    } finally {
+      setAgregandoBotella(false);
     }
   };
 
@@ -669,6 +705,30 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
     setViewMode("view");
   };
 
+  // UX-08C: un único listener de Escape, con prioridad de capas (de más alta
+  // a más baja) para que un solo keypress cierre solo una capa. Alcance
+  // limitado a vinos existentes: en el alta (isNew) no se agrega ningún
+  // comportamiento nuevo, queda tal cual estaba. Para "Editar" sin overlay,
+  // Escape equivale exactamente a Cancelar (descarta cambios, vuelve a la
+  // ficha) — nunca a cerrar todo el modal, igual que ya decidimos para el
+  // botón Cancelar en UX-08B. Un solo addEventListener con cleanup en cada
+  // re-registro: no hay riesgo de listeners duplicados ni de leak.
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key !== "Escape") return;
+      if (showPhotoZoom) { setShowPhotoZoom(false); return; }
+      if (showPhotoSourceSheet) { setShowPhotoSourceSheet(false); return; }
+      if (confirmAbrir) { setConfirmAbrir(false); return; }
+      if (showDeleteConfirm) { setShowDeleteConfirm(false); return; }
+      if (isNew) return; // alta: sin cambios, fuera de alcance de esta tarea
+      if (showEditForm) { handleCancelEdit(); return; }
+      onCancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPhotoZoom, showPhotoSourceSheet, confirmAbrir, showDeleteConfirm, isNew, showEditForm, persisted, wine, onCancel]);
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 50 }} onClick={onCancel}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: CARD_BG, borderRadius: 14, width: "100%", maxWidth: !isNew && !showEditForm ? 640 : 480, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(43,33,28,0.35)" }}>
@@ -686,11 +746,27 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
             <h2 style={{ margin: 0, fontFamily: SERIF, fontSize: 22, color: BORDEAUX, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isNew ? "Agregar vino" : draft.nombre || "Vino"}</h2>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            {/* UX-08C: favorito accesible directo desde la ficha, sin pasar
+                por Editar. Mismo criterio de visibilidad que el lápiz
+                (ficha de consulta, no en el alta). El control que ya existe
+                dentro del formulario de edición se mantiene sin cambios. */}
+            {!isNew && isAuthor && viewMode === "view" && (
+              <button
+                onClick={handleToggleFavorito}
+                style={{ background: "none", border: "none", cursor: "pointer", color: draft.favorito ? DANGER : MUTED, padding: 4 }}
+                aria-label={draft.favorito ? "Quitar de favoritos" : "Marcar como favorito"}
+              >
+                <Heart size={19} fill={draft.favorito ? DANGER : "none"} />
+              </button>
+            )}
             {/* UX-08: entrada deliberada al formulario de edición existente,
                 visible solo en la ficha de consulta y solo para quien tiene
                 permiso de edición (mismo criterio que ya filtraba el
-                formulario). No aparece en el alta (isNew). */}
-            {!isNew && isAuthor && viewMode === "view" && (
+                formulario). No aparece en el alta (isNew). UX-08C: tampoco
+                mientras "Abrir una botella" tiene un resultado pendiente de
+                responder ("Ahora no" / "Contar cómo estuvo"), para no
+                esconder ese paso al entrar a edición. */}
+            {!isNew && isAuthor && viewMode === "view" && !abrirResultado && (
               <button
                 onClick={() => setViewMode("edit")}
                 style={{ background: "none", border: "none", cursor: "pointer", color: BORDEAUX, padding: 4 }}
@@ -1061,7 +1137,9 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
           )}
 
           {/* ---- Etapa 5: Abrir una botella ---- */}
-          {!isNew && isAuthor && (
+          {/* UX-08C: visible solo en la ficha de consulta, ya no en el
+              formulario de edición (antes se mostraba en ambos). */}
+          {!isNew && isAuthor && !showEditForm && (
             <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 4 }}>
               {abrirResultado ? (
                 abrirResultado.error ? (
@@ -1138,12 +1216,72 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
                   <Loader2 size={18} color={MUTED} style={{ animation: "spin 0.8s linear infinite" }} />
                 </div>
               ) : experiencias.length === 0 ? (
-                <p style={{ color: MUTED, fontSize: 13 }}>Todavía no registraste ninguna botella de este vino.</p>
+                <>
+                  {/* UX-08C: el copy y el CTA dependen del stock — reutilizan
+                      exactamente el mismo flujo que el botón principal
+                      (setConfirmAbrir) o, sin stock, la misma función de
+                      reposición del "+ Agregar botella" de más abajo. Nunca
+                      se muestra un CTA de registrar deshabilitado. */}
+                  <p style={{ margin: "0 0 4px", color: MUTED, fontSize: 13 }}>
+                    {(draft.stock ?? 0) > 0
+                      ? "Todavía no registraste ninguna botella de este vino."
+                      : "No tenés botellas disponibles."}
+                  </p>
+                  <p style={{ margin: "0 0 12px", color: MUTED, fontSize: 13 }}>
+                    {(draft.stock ?? 0) > 0
+                      ? "Cuando lo tomes, registralo para empezar a construir tu historial."
+                      : "Si volviste a comprar este vino, agregá una a tu cava."}
+                  </p>
+                  {isAuthor && (
+                    (draft.stock ?? 0) > 0 ? (
+                      <button
+                        onClick={() => setConfirmAbrir(true)}
+                        style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}
+                      >
+                        Registrar una botella
+                      </button>
+                    ) : (
+                      <button
+                        disabled={agregandoBotella}
+                        onClick={handleAgregarBotellaClick}
+                        style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: agregandoBotella ? "default" : "pointer", fontSize: 13.5, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}
+                      >
+                        {agregandoBotella && <Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} />}
+                        + Agregar botella
+                      </button>
+                    )
+                  )}
+                </>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {experiencias.map((exp) => (
                     <ExperienceRow key={exp.id} exp={exp} onSave={handleSaveExperienciaEdit} />
                   ))}
+                  {isAuthor && (
+                    <div style={{ marginTop: 4 }}>
+                      {(draft.stock ?? 0) > 0 ? (
+                        <button
+                          onClick={() => setConfirmAbrir(true)}
+                          style={{ background: "none", border: "none", color: BORDEAUX, textDecoration: "underline", cursor: "pointer", fontSize: 13, padding: 0, fontWeight: 600 }}
+                        >
+                          + Registrar otra botella
+                        </button>
+                      ) : (
+                        <div style={{ background: CREAM, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "10px 12px" }}>
+                          <p style={{ margin: "0 0 2px", fontSize: 12.5, color: MUTED }}>No tenés botellas disponibles.</p>
+                          <p style={{ margin: "0 0 8px", fontSize: 12.5, color: MUTED }}>Si volviste a comprar este vino, agregá una a tu cava.</p>
+                          <button
+                            disabled={agregandoBotella}
+                            onClick={handleAgregarBotellaClick}
+                            style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: agregandoBotella ? "default" : "pointer", fontSize: 13, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}
+                          >
+                            {agregandoBotella && <Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} />}
+                            + Agregar botella
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1786,6 +1924,12 @@ export default function App() {
       // ratings — se escucha la tabla que ahora importa para refrescar la
       // grilla (ratings sigue existiendo, pero ya no se lee desde la UI).
       .on("postgres_changes", { event: "*", schema: "public", table: "consumos" }, loadWines)
+      // UX-08C: "+ Agregar botella" y el favorito directo desde la ficha
+      // escriben en wine_privado por fuera del submit completo de edición —
+      // se agrega esta tabla para que la grilla (y otras sesiones/pestañas)
+      // se mantengan al día sin depender de que loadWines se dispare desde
+      // el propio llamador local.
+      .on("postgres_changes", { event: "*", schema: "public", table: "wine_privado" }, loadWines)
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, []);
@@ -1953,6 +2097,66 @@ export default function App() {
       console.error(error);
       setSaveError(true);
     }
+  };
+
+  // UX-08C: favorito directo desde la ficha — update acotado a esa única
+  // columna de wine_privado, sin pasar por el upsert completo de
+  // handleSave (que reescribiría precio/stock con lo que haya en el draft
+  // de ese momento). Devuelve true/false para que WineModal solo actualice
+  // su estado local si la escritura fue realmente exitosa.
+  const handleToggleFavorito = async (wineId, nuevoValor) => {
+    const { error } = await supabase
+      .from("wine_privado")
+      .update({ favorito: nuevoValor })
+      .eq("wine_id", wineId)
+      .eq("user_id", session.user.id);
+    if (error) {
+      console.error(error);
+      setSaveError(true);
+      return false;
+    }
+    await loadWines();
+    return true;
+  };
+
+  // UX-08C: "+ Agregar botella" (reposición) — suma 1 al stock existente sin
+  // crear un consumo ni un vino nuevo. Sin RPC/migración: se lee el stock
+  // fresco de wine_privado (no el que tenga en memoria el WineModal, que
+  // puede estar desactualizado) y se escribe stock+1 en un UPDATE que toca
+  // únicamente esa columna — precio y favorito quedan intactos. Esto no es
+  // perfectamente atómico (dos escrituras casi simultáneas podrían pisarse),
+  // riesgo aceptado conscientemente para esta beta; la única forma de
+  // garantizarlo del todo sería una función de Postgres dedicada, que no se
+  // crea en esta tarea. Devuelve el stock nuevo, o null si falló (para que
+  // WineModal nunca muestre un incremento ficticio).
+  const handleAgregarBotella = async (wineId) => {
+    const { data: actual, error: readError } = await supabase
+      .from("wine_privado")
+      .select("stock")
+      .eq("wine_id", wineId)
+      .eq("user_id", session.user.id)
+      .single();
+    if (readError) {
+      console.error(readError);
+      setSaveError(true);
+      return null;
+    }
+
+    const { data: actualizado, error: writeError } = await supabase
+      .from("wine_privado")
+      .update({ stock: (actual.stock ?? 0) + 1 })
+      .eq("wine_id", wineId)
+      .eq("user_id", session.user.id)
+      .select("stock")
+      .single();
+    if (writeError) {
+      console.error(writeError);
+      setSaveError(true);
+      return null;
+    }
+
+    await loadWines();
+    return actualizado.stock;
   };
 
   const handleRate = async (wineId, valor) => {
@@ -2331,6 +2535,8 @@ export default function App() {
           onRate={handleRate}
           onAbrir={handleAbrir}
           onSaveExperiencia={handleSaveExperiencia}
+          onToggleFavorito={handleToggleFavorito}
+          onAgregarBotella={handleAgregarBotella}
           onCancel={() => { setShowForm(false); setEditing(null); }}
         />
       )}
