@@ -18,6 +18,8 @@ import {
   SlidersHorizontal,
   Heart,
   ArrowLeft,
+  Pencil,
+  WineOff,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -387,6 +389,10 @@ function ProfileSetup({ onSubmit }) {
 function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDelete, onRate, onAbrir, onSaveExperiencia, onCancel }) {
   const isNew = !wine;
   const isAuthor = isNew || (wine.userId === myUserId && canEdit);
+  // UX-08: separa consulta (ficha de solo lectura) de edición dentro del
+  // mismo WineModal, reutilizando todo el estado/lógica existente. Un vino
+  // nuevo nunca pasa por "view": entra directo al flujo de alta de siempre.
+  const [viewMode, setViewMode] = useState(isNew ? "edit" : "view");
   const [entryMode, setEntryMode] = useState(isNew ? "photo" : "manual"); // 'manual' | 'photo'
   const [identifyBlob, setIdentifyBlob] = useState(null);
   const [identifyPreview, setIdentifyPreview] = useState(null);
@@ -404,6 +410,11 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
       : { id: uid(), nombre: "", bodega: "", varietal: "", anada: "", precio: "", maridaje: "", region: null, lugar: "", stock: 1, favorito: false, foto: null, userId: myUserId }
   );
   const [photoBlob, setPhotoBlob] = useState(null);
+  // UX-08: última versión conocida como "guardada" de este vino, usada para
+  // restaurar el draft al cancelar una edición sin perder cambios hechos por
+  // otras vías (Abrir una botella) mientras tanto. Se actualiza solo cuando
+  // algo se persiste de verdad (ver handleAbrirConfirm y handleSubmit).
+  const [persisted, setPersisted] = useState(wine ? { ...wine } : null);
   const [myRating, setMyRating] = useState(wine?.ratings?.[myUserId]?.valor || 0);
   const [processingPhoto, setProcessingPhoto] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -438,6 +449,7 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
     try {
       const result = await onAbrir(draft.id);
       setDraft((w) => ({ ...w, stock: result.stock }));
+      setPersisted((p) => (p ? { ...p, stock: result.stock } : p));
       setAbrirResultado(result);
       await loadExperiencias();
     } catch (err) {
@@ -607,23 +619,59 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
 
   const canSave = draft.nombre.trim().length > 0 && !processingPhoto && !saving;
   const ratingsEntries = Object.entries(wine?.ratings || {}).filter(([id]) => id !== myUserId);
+  // UX-08: se muestra el formulario editable cuando es un alta nueva, o
+  // cuando es un vino existente en modo edición y el usuario tiene permiso
+  // para editar. En cualquier otro caso (viewMode "view", o sin permiso) se
+  // muestra la ficha de consulta de solo lectura.
+  const showEditForm = isNew || (viewMode === "edit" && isAuthor);
+
+  // UX-08: el resumen de puntuación de la ficha se calcula en vivo a partir
+  // de las experiencias ya cargadas por este modal (loadExperiencias), no
+  // de un valor cacheado en el prop `wine` — así se refleja al instante
+  // después de "Abrir una botella" o de puntuar una experiencia, sin
+  // depender de que el componente padre vuelva a pasar un `wine` fresco.
+  const experienciasPuntuadas = (experiencias || []).filter((e) => e.puntuacion != null);
+  const experienciaPromedio =
+    experienciasPuntuadas.length > 0
+      ? experienciasPuntuadas.reduce((s, e) => s + Number(e.puntuacion), 0) / experienciasPuntuadas.length
+      : null;
 
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      await onSave(draft, photoBlob);
-      // La puntuación general no forma parte del alta (la sección ni se
-      // muestra cuando isNew), así que no tiene sentido ejecutar una
-      // operación de rating con el valor inicial (0) en ese caso.
-      if (!isNew) await onRate(draft.id, myRating);
+      // UX-08: la puntuación general (ratings) deja de ser una fuente activa
+      // de escritura desde la UX — guardar una edición ya no dispara
+      // onRate/handleRate como efecto colateral. La tabla, sus datos
+      // históricos y la función handleRate quedan intactos, simplemente no
+      // se llaman más desde aquí.
+      const ok = await onSave(draft, photoBlob, isNew);
+      if (ok && !isNew) {
+        // Vino existente guardado con éxito: no se cierra el modal, se
+        // vuelve a la ficha de consulta ya actualizada con lo recién
+        // guardado.
+        setPersisted({ ...draft });
+        setPhotoBlob(null);
+        setViewMode("view");
+      }
     } finally {
       setSaving(false);
     }
   };
 
+  // UX-08: Cancelar en modo edición de un vino existente no cierra el
+  // modal — descarta los cambios no guardados (restaurando el draft desde
+  // la última versión persistida conocida) y vuelve a la ficha de consulta.
+  // La X general sigue cerrando el modal completo en cualquier modo (sin
+  // cambios ahí). No aplica a isNew: el alta no tiene ficha de consulta.
+  const handleCancelEdit = () => {
+    setDraft(persisted ? { ...persisted } : { ...wine });
+    setPhotoBlob(null);
+    setViewMode("view");
+  };
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 50 }} onClick={onCancel}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: CARD_BG, borderRadius: 14, width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(43,33,28,0.35)" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: CARD_BG, borderRadius: 14, width: "100%", maxWidth: !isNew && !showEditForm ? 640 : 480, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(43,33,28,0.35)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 20px", borderBottom: `1px solid ${BORDER}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             {canGoBack && (
@@ -637,9 +685,24 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
             )}
             <h2 style={{ margin: 0, fontFamily: SERIF, fontSize: 22, color: BORDEAUX, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isNew ? "Agregar vino" : draft.nombre || "Vino"}</h2>
           </div>
-          <button onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", color: MUTED, padding: 4, flexShrink: 0 }} aria-label="Cerrar">
-            <X size={20} />
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            {/* UX-08: entrada deliberada al formulario de edición existente,
+                visible solo en la ficha de consulta y solo para quien tiene
+                permiso de edición (mismo criterio que ya filtraba el
+                formulario). No aparece en el alta (isNew). */}
+            {!isNew && isAuthor && viewMode === "view" && (
+              <button
+                onClick={() => setViewMode("edit")}
+                style={{ background: "none", border: "none", cursor: "pointer", color: BORDEAUX, padding: 4 }}
+                aria-label="Editar vino"
+              >
+                <Pencil size={19} />
+              </button>
+            )}
+            <button onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", color: MUTED, padding: 4 }} aria-label="Cerrar">
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         <div style={{ padding: 20 }}>
@@ -746,7 +809,8 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
               <strong style={{ color: INK }}>Revisá la información identificada antes de guardar.</strong> Info técnica detectada: {techNotes}
             </div>
           )}
-          {isNew ? (
+          {showEditForm ? (
+          isNew ? (
             <>
               <p style={{ margin: "0 0 14px", fontFamily: SERIF, fontSize: 17, color: BORDEAUX, fontWeight: 700, textAlign: "center" }}>
                 Revisá los datos
@@ -834,7 +898,7 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
                 </div>
               </div>
             </>
-          ) : isAuthor ? (
+          ) : (
             <>
               <div
                 onClick={() => fileInputRef.current?.click()}
@@ -933,15 +997,66 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
                 {draft.favorito ? "Favorito" : "Marcar como favorito"}
               </button>
             </>
+          )
           ) : (
-            <div style={{ marginBottom: 18, fontSize: 14, color: INK, lineHeight: 1.9 }}>
-              {draft.foto && <img src={draft.foto} alt={draft.nombre} style={{ width: 170, aspectRatio: "4 / 5", objectFit: "cover", borderRadius: 10, display: "block", margin: "0 auto 12px" }} />}
-              <div><strong>Bodega / varietal:</strong> {[draft.bodega, draft.varietal].filter(Boolean).join(" · ") || "—"}</div>
-              <div><strong>Añada:</strong> {draft.anada || "—"}</div>
-              <div><strong>Precio:</strong> {draft.precio ? `$${Number(draft.precio).toLocaleString("es-AR")}` : "—"}</div>
-              <div><strong>Maridaje:</strong> {draft.maridaje || "—"}</div>
-              <div><strong>Región / lugar:</strong> {[draft.region, draft.lugar].filter(Boolean).join(" · ") || "—"}</div>
-              <div><strong>Stock:</strong> {draft.stock ?? 0} botella{(draft.stock ?? 0) === 1 ? "" : "s"}</div>
+            <div className="ux08-ficha">
+              <div className="ux08-ficha-photo">
+                {draft.foto ? (
+                  <img
+                    src={draft.foto}
+                    alt={draft.nombre}
+                    onClick={() => setShowPhotoZoom(true)}
+                    style={{ width: "100%", aspectRatio: "4 / 5", objectFit: "cover", borderRadius: 10, cursor: "zoom-in", display: "block" }}
+                  />
+                ) : (
+                  <div style={{ width: "100%", aspectRatio: "4 / 5", borderRadius: 10, overflow: "hidden" }}>
+                    <BottlePlaceholder />
+                  </div>
+                )}
+              </div>
+
+              <div className="ux08-ficha-info">
+                <h2 style={{ margin: 0, fontFamily: SERIF, fontSize: 21, color: BORDEAUX, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                  {draft.nombre}
+                  {draft.favorito && <Heart size={16} fill={DANGER} color={DANGER} />}
+                </h2>
+                {(draft.bodega || draft.varietal) && (
+                  <p style={{ margin: "4px 0 0", fontSize: 14.5, color: INK }}>
+                    {[draft.bodega, draft.varietal].filter(Boolean).join(" · ")}
+                  </p>
+                )}
+                {draft.anada && <p style={{ margin: "2px 0 0", fontSize: 13.5, color: MUTED }}>Añada {draft.anada}</p>}
+                {draft.lugar && (
+                  <p style={{ margin: "4px 0 0", fontSize: 13, color: MUTED, display: "flex", alignItems: "center", gap: 4 }}>
+                    <MapPin size={12} /> {draft.lugar}
+                  </p>
+                )}
+
+                <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 12, paddingTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
+                  {experiencias && experienciasPuntuadas.length > 0 && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <StarRating value={experienciaPromedio} onChange={() => {}} size={16} readOnly />
+                      <span style={{ fontSize: 13.5, color: INK }}>
+                        {experienciaPromedio.toFixed(1).replace(".", ",")} ·{" "}
+                        {experienciasPuntuadas.length === 1 ? "1 experiencia puntuada" : `${experienciasPuntuadas.length} experiencias puntuadas`}
+                      </span>
+                    </div>
+                  )}
+                  {experiencias && experiencias.length > 0 && (
+                    <p style={{ margin: 0, fontSize: 13, color: MUTED }}>
+                      Tomado {experiencias.length} {experiencias.length === 1 ? "vez" : "veces"}
+                    </p>
+                  )}
+                  <p style={{ margin: 0, fontSize: 13, color: MUTED }}>
+                    {(draft.stock ?? 0) === 1 ? "1 botella disponible" : `${draft.stock ?? 0} botellas disponibles`}
+                  </p>
+                  {draft.precio != null && draft.precio !== "" && (
+                    <p style={{ margin: 0, fontSize: 13, color: MUTED }}>
+                      Precio pagado: ${Number(draft.precio).toLocaleString("es-AR")}
+                    </p>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
@@ -984,42 +1099,40 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
                   onClick={() => setConfirmAbrir(true)}
                   style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 0", borderRadius: 10, border: "none", background: (draft.stock ?? 0) > 0 ? GOLD : BORDER, color: (draft.stock ?? 0) > 0 ? BORDEAUX_DARK : MUTED, fontWeight: 700, fontSize: 15, cursor: (draft.stock ?? 0) > 0 ? "pointer" : "not-allowed" }}
                 >
-                  {abriendo ? <Loader2 size={17} style={{ animation: "spin 0.8s linear infinite" }} /> : <Wine size={18} />}
-                  {(draft.stock ?? 0) > 0 ? "Abrir una botella" : "No te quedan botellas"}
+                  {abriendo ? (
+                    <Loader2 size={17} style={{ animation: "spin 0.8s linear infinite" }} />
+                  ) : (draft.stock ?? 0) > 0 ? (
+                    <Wine size={18} />
+                  ) : (
+                    <WineOff size={18} />
+                  )}
+                  {(draft.stock ?? 0) > 0 ? "Abrir una botella" : "Sin botellas disponibles"}
                 </button>
               )}
             </div>
           )}
 
-          {/* Favorito y puntuación general no forman parte del alta inicial. */}
-          {!isNew && (
-            <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 16 }}>
-              <Field label="Tu puntuación general">
-                <StarRating value={myRating} onChange={setMyRating} size={28} />
-              </Field>
+          {/* UX-08: la puntuación general (ratings) ya no forma parte de la
+              UX, ni en el alta ni en la edición — se eliminó del render por
+              completo (no se oculta detrás de ninguna opción). ratings,
+              handleRate/onRate y la tabla en Supabase quedan intactos, solo
+              dejaron de tener un punto de escritura/lectura visible acá. */}
 
-              {ratingsEntries.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <span style={{ fontSize: 13, color: MUTED, display: "block", marginBottom: 8 }}>Puntajes de los demás</span>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {ratingsEntries.map(([id, r]) => (
-                      <div key={id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <span style={{ fontSize: 13.5, color: INK }}>{r.nombre}</span>
-                        <StarRating value={r.valor} onChange={() => {}} size={15} readOnly />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+          {/* UX-08: "información complementaria" (maridaje) solo se muestra
+              como texto en la ficha de consulta — en edición ya existe el
+              campo Maridaje dentro del formulario, mostrarlo dos veces sería
+              redundante. */}
+          {!isNew && !showEditForm && draft.maridaje && (
+            <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 16 }}>
+              <h3 style={{ fontFamily: SERIF, fontSize: 15, color: INK, margin: "0 0 8px" }}>Maridaje sugerido</h3>
+              <p style={{ margin: 0, fontSize: 14, color: INK }}>{draft.maridaje}</p>
             </div>
           )}
 
           {/* ---- Etapa 5: Tus experiencias ---- */}
           {!isNew && (
             <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 16 }}>
-              <h3 style={{ fontFamily: SERIF, fontSize: 15, color: INK, margin: "0 0 10px" }}>
-                Tus experiencias {experiencias && experiencias.length > 0 && `(${experiencias.length})`}
-              </h3>
+              <h3 style={{ fontFamily: SERIF, fontSize: 15, color: INK, margin: "0 0 10px" }}>Tus experiencias</h3>
               {experiencias === null ? (
                 <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}>
                   <Loader2 size={18} color={MUTED} style={{ animation: "spin 0.8s linear infinite" }} />
@@ -1039,7 +1152,7 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
           )}
         </div>
 
-        {entryMode === "manual" && (
+        {entryMode === "manual" && showEditForm && (
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderTop: `1px solid ${BORDER}` }}>
           <div>
             {!isNew && isAuthor && (
@@ -1049,7 +1162,10 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
             )}
           </div>
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={onCancel} style={{ padding: "10px 18px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 14 }}>
+            {/* UX-08: para un vino existente, Cancelar ya no cierra el modal
+                — descarta los cambios y vuelve a la ficha de consulta. El
+                alta (isNew) sigue cerrando todo con onCancel, sin cambios. */}
+            <button onClick={isNew ? onCancel : handleCancelEdit} style={{ padding: "10px 18px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: "pointer", fontSize: 14 }}>
               Cancelar
             </button>
             <button
@@ -1112,7 +1228,16 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, onSave, onDel
         </div>
       )}
 
-      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg) } }
+        .ux08-ficha { display: flex; flex-direction: column; gap: 16px; }
+        .ux08-ficha-photo { width: 100%; max-width: 260px; margin: 0 auto; }
+        @media (min-width: 680px) {
+          .ux08-ficha { flex-direction: row; align-items: flex-start; gap: 24px; }
+          .ux08-ficha-photo { flex: 0 0 220px; max-width: none; margin: 0; }
+          .ux08-ficha-info { flex: 1; min-width: 0; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -1451,8 +1576,11 @@ function AdminPanel({ myUserId, accessToken, onClose }) {
 }
 
 function WineCard({ wine, onClick, clickable }) {
-  const avg = avgOf(wine.ratings);
-  const count = Object.keys(wine.ratings || {}).length;
+  // UX-08: la puntuación visible de la tarjeta deja de leer `ratings` y pasa
+  // a usar el promedio derivado de consumos.puntuacion (mismo cálculo que
+  // en la ficha de WineModal, ya resuelto en loadWines).
+  const avg = wine.experienciaPromedio;
+  const count = wine.experienciasPuntuadas || 0;
   return (
     <div
       onClick={clickable ? onClick : undefined}
@@ -1518,8 +1646,15 @@ function WineCard({ wine, onClick, clickable }) {
         </div>
         <div style={{ marginTop: "auto", display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <StarRating value={avg || 0} onChange={() => {}} size={15} readOnly />
-            {count > 0 && <span style={{ fontSize: 11.5, color: MUTED }}>({count})</span>}
+            {/* UX-08: sin experiencias puntuadas no se muestra nada (ni
+                estrellas vacías ni "0") — antes siempre se renderizaba la
+                fila de estrellas aunque no hubiera ninguna puntuación. */}
+            {count > 0 && (
+              <>
+                <StarRating value={avg} onChange={() => {}} size={15} readOnly />
+                <span style={{ fontSize: 11.5, color: MUTED }}>({count})</span>
+              </>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {(wine.stock ?? 0) > 2 && (
@@ -1647,7 +1782,10 @@ export default function App() {
     const channel = supabase
       .channel("cava-cambios")
       .on("postgres_changes", { event: "*", schema: "public", table: "wines" }, loadWines)
-      .on("postgres_changes", { event: "*", schema: "public", table: "ratings" }, loadWines)
+      // UX-08: la fuente visible de puntuación pasa a ser consumos, no
+      // ratings — se escucha la tabla que ahora importa para refrescar la
+      // grilla (ratings sigue existiendo, pero ya no se lee desde la UI).
+      .on("postgres_changes", { event: "*", schema: "public", table: "consumos" }, loadWines)
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, []);
@@ -1682,11 +1820,20 @@ export default function App() {
 
     const privadoPorVino = Object.fromEntries((privados || []).map((p) => [p.wine_id, p]));
 
-    const { data: consumosData, error: consError } = await supabase.from("consumos").select("wine_id").eq("user_id", session.user.id);
+    // UX-08: se trae también `puntuacion` (antes solo `wine_id`, para contar
+    // consumos) para poder calcular, sin ninguna consulta adicional ni
+    // cambio de schema/RLS, el promedio derivado de experiencias puntuadas
+    // que ahora reemplaza a `ratings` como fuente visible de puntuación.
+    const { data: consumosData, error: consError } = await supabase.from("consumos").select("wine_id, puntuacion").eq("user_id", session.user.id);
     if (consError) console.error(consError);
-    const conteoConsumos = {};
+    const statsConsumos = {};
     (consumosData || []).forEach((c) => {
-      conteoConsumos[c.wine_id] = (conteoConsumos[c.wine_id] || 0) + 1;
+      if (!statsConsumos[c.wine_id]) statsConsumos[c.wine_id] = { total: 0, suma: 0, puntuados: 0 };
+      statsConsumos[c.wine_id].total += 1;
+      if (c.puntuacion != null) {
+        statsConsumos[c.wine_id].suma += Number(c.puntuacion);
+        statsConsumos[c.wine_id].puntuados += 1;
+      }
     });
 
     setWines(
@@ -1704,10 +1851,17 @@ export default function App() {
           lugar: w.lugar,
           stock: priv.stock ?? 0,
           favorito: priv.favorito ?? false,
-          vecesConsumido: conteoConsumos[w.id] || 0,
+          vecesConsumido: statsConsumos[w.id]?.total || 0,
+          // UX-08: promedio derivado exclusivamente de consumos.puntuacion
+          // != null — reemplaza a avgOf(ratings) como fuente visible en
+          // WineCard, en el sort "rating-desc" y en la ficha de WineModal.
+          experienciaPromedio: statsConsumos[w.id]?.puntuados ? statsConsumos[w.id].suma / statsConsumos[w.id].puntuados : null,
+          experienciasPuntuadas: statsConsumos[w.id]?.puntuados || 0,
           foto: w.foto_url,
           userId: w.user_id,
           fechaAgregado: w.created_at,
+          // ratings se preserva por reversibilidad (no se borra tabla, dato
+          // ni código histórico) aunque ya no se lea desde la UX.
           ratings: Object.fromEntries(
             (w.ratings || []).map((r) => [r.user_id, { valor: Number(r.valor), nombre: r.profiles?.nombre || "—" }])
           ),
@@ -1722,7 +1876,15 @@ export default function App() {
     if (!error) setProfile(data);
   };
 
-  const handleSave = async (draft, photoBlob) => {
+  // UX-08: para un vino existente, guardar con éxito ya no cierra el modal
+  // (WineModal se queda abierto y vuelve a su ficha de consulta); para un
+  // vino nuevo (isNewWine) el comportamiento es exactamente el de antes —
+  // cierra siempre. En caso de error, se cierra igual que antes en ambos
+  // casos (no se cambia el manejo de errores, fuera del alcance de esta
+  // tarea). Devuelve true/false para que WineModal sepa si el guardado fue
+  // exitoso.
+  const handleSave = async (draft, photoBlob, isNewWine) => {
+    let ok = true;
     try {
       let foto_url = draft.foto && draft.foto.startsWith("http") ? draft.foto : null;
       if (photoBlob) {
@@ -1767,9 +1929,13 @@ export default function App() {
     } catch (err) {
       console.error(err);
       setSaveError(true);
+      ok = false;
     }
-    setShowForm(false);
-    setEditing(null);
+    if (isNewWine || !ok) {
+      setShowForm(false);
+      setEditing(null);
+    }
+    return ok;
   };
 
   // ---- Etapa 5: Abrir una botella + experiencias ----
@@ -1883,7 +2049,7 @@ export default function App() {
       case "precio-desc": return (Number(b.precio) || 0) - (Number(a.precio) || 0);
       case "precio-asc": return (Number(a.precio) || 0) - (Number(b.precio) || 0);
       case "stock-desc": return (Number(b.stock) || 0) - (Number(a.stock) || 0);
-      case "rating-desc": return (avgOf(b.ratings) || 0) - (avgOf(a.ratings) || 0);
+      case "rating-desc": return (b.experienciaPromedio || 0) - (a.experienciaPromedio || 0);
       case "anada-desc": return (Number(b.anada) || 0) - (Number(a.anada) || 0);
       default: return new Date(b.fechaAgregado) - new Date(a.fechaAgregado);
     }
