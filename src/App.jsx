@@ -190,6 +190,15 @@ function formatFecha(iso) {
   return new Date(iso).toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" });
 }
 
+// UX-07: timestamp numérico de la fecha de incorporación, para usar en
+// comparators de orden. Una fecha nula/inválida cae a 0 (en vez de NaN) para
+// que ese vino quede al final del orden descendente por fecha, sin romper
+// el resultado del sort.
+function fechaTime(fechaAgregado) {
+  const t = new Date(fechaAgregado).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
 // Compone el texto visible del campo "Origen" a partir de lugar/region
 // (ambos estructurados, provistos por la IA), evitando duplicar el texto
 // cuando coinciden. No hace el camino inverso: nunca se parsea este texto
@@ -2309,7 +2318,19 @@ export default function App() {
       case "stock-desc": return (Number(b.stock) || 0) - (Number(a.stock) || 0);
       case "rating-desc": return (b.experienciaPromedio || 0) - (a.experienciaPromedio || 0);
       case "anada-desc": return (Number(b.anada) || 0) - (Number(a.anada) || 0);
-      default: return new Date(b.fechaAgregado) - new Date(a.fechaAgregado);
+      // UX-07: orden por defecto ("reciente" / "Más recientes"). Primero el
+      // grupo con stock > 0, después el grupo con stock === 0 — sin importar
+      // cuántas botellas tenga cada uno dentro de su grupo (stock 1 y stock
+      // 10 son el mismo grupo). Dentro de cada grupo, más recientemente
+      // agregado primero. `fechaTime` cae a 0 ante una fecha nula/inválida,
+      // para que ese caso quede al final de su grupo en vez de romper el
+      // orden del sort.
+      default: {
+        const tieneStockA = (a.stock ?? 0) > 0 ? 1 : 0;
+        const tieneStockB = (b.stock ?? 0) > 0 ? 1 : 0;
+        if (tieneStockA !== tieneStockB) return tieneStockB - tieneStockA;
+        return fechaTime(b.fechaAgregado) - fechaTime(a.fechaAgregado);
+      }
     }
   });
 
