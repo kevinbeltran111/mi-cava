@@ -1657,7 +1657,24 @@ function ExperienceRow({ exp, onSave }) {
           <span>{formatFecha(exp.fecha)}</span>
           {exp.puntuacion && <StarRating value={exp.puntuacion} onChange={() => {}} size={13} readOnly />}
         </div>
-        <button onClick={() => setEditing(true)} style={{ background: "none", border: "none", color: BORDEAUX, textDecoration: "underline", cursor: "pointer", fontSize: 12, padding: 0, flexShrink: 0 }}>
+        <button
+          onClick={() => {
+            // Fix: `puntuacion`/`comida`/`comentario` solo se inicializan
+            // una vez, en el mount (useState). Si esta fila se montó antes
+            // de que los datos reales llegaran (p. ej. justo después de
+            // "Abrir una botella", cuando el consumo todavía existe vacío y
+            // "Contar cómo estuvo" lo completa un instante después sin que
+            // este componente se desmonte — misma key=exp.id, React reusa
+            // la instancia), el estado local queda stale aunque `exp` ya
+            // esté actualizado. Resincronizar acá, justo antes de editar,
+            // garantiza que el formulario siempre parte del dato vigente.
+            setPuntuacion(exp.puntuacion || 0);
+            setComida(exp.comida || "");
+            setComentario(exp.comentario || "");
+            setEditing(true);
+          }}
+          style={{ background: "none", border: "none", color: BORDEAUX, textDecoration: "underline", cursor: "pointer", fontSize: 12, padding: 0, flexShrink: 0 }}
+        >
           {isEmpty ? "Completar experiencia" : "Editar"}
         </button>
       </div>
