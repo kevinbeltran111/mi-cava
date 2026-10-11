@@ -1,3 +1,17 @@
+-- =============================================================================
+-- ⚠️  ARCHIVO HISTÓRICO — SUPERSEDED — NO EJECUTAR
+-- =============================================================================
+-- Este archivo NO representa el estado actual de la base de datos y NO debe
+-- ejecutarse en ningún entorno. Ejecutarlo crearía un esquema distinto al de
+-- producción (por ejemplo, con políticas de lectura que hoy no existen).
+--
+-- Reemplazado por el baseline versionado:
+--   supabase/migrations/20261010000000_baseline_produccion.sql
+--   supabase/migrations/20261010000001_baseline_storage.sql
+--
+-- Se conserva solo como referencia histórica. Ver supabase/historico/README.md.
+-- =============================================================================
+
 -- MIGRACIÓN: sistema de roles (admin / editor / viewer)
 -- Correr UNA SOLA VEZ sobre el proyecto de Supabase ya existente.
 -- No borra ni reemplaza nada de lo que ya funciona; se integra con las

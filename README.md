@@ -13,15 +13,11 @@ Entrá a https://supabase.com y creá una cuenta.
 "New project" → ponele un nombre (ej. "mi-cava") y una contraseña de base
 de datos (guardala, no la vas a necesitar para esta app pero por las
 dudas).
-Cuando el proyecto termine de crearse, andá a SQL Editor → New
-query, pegá todo el contenido de `supabase/schema.sql` (de esta carpeta)
-y tocá Run. Esto crea las tablas `profiles`, `wines` y `ratings`, y
-los permisos (solo invitados escriben, cualquiera lee). Si el proyecto es
-nuevo, después corré también `supabase/migration_roles.sql` para sumar el
-sistema de roles (admin/editor/viewer) — ver la sección "Roles y
-administración" más abajo.
-Andá a Storage → Create a new bucket → nombre exacto: `etiquetas`
-→ marcalo como Public bucket → Create.
+Cuando el proyecto termine de crearse, creá la base de datos (tablas,
+permisos, funciones y el bucket de fotos `etiquetas`) siguiendo
+`supabase/README.md`. La definición vigente está en `supabase/migrations/`.
+No ejecutes los archivos de `supabase/historico/`: están reemplazados y
+crearían un esquema distinto al actual.
 Andá a Project Settings → API. Ahí vas a ver:
 Project URL → esto es tu `VITE_SUPABASE_URL`
 anon public key (o "publishable") → esto es tu `VITE_SUPABASE_ANON_KEY`
@@ -96,14 +92,9 @@ editor — puede cargar, editar y borrar sus propios vinos, y puntuar
 cualquier vino. Es el rol por defecto para todo usuario nuevo.
 viewer — puede ver la cava, buscar, abrir vinos y puntuarlos, pero no
 puede crear, editar ni borrar vinos.
-Aplicar el sistema de roles (una sola vez)
-En Supabase → SQL Editor → New query, pegá todo el contenido de
-`supabase/migration_roles.sql` y tocá Run.
-Dentro de ese mismo archivo hay una línea comentada (empieza con `-- update profiles set role = 'admin'...`) — copiala aparte, sacale los dos
-guiones del principio, reemplazá el mail de ejemplo por el tuyo, y
-ejecutala en una query nueva. Así quedás como el primer administrador.
-Subí el código actualizado a GitHub como siempre — no hace falta ninguna
-variable de entorno nueva para esto.
+El sistema de roles forma parte de la base de datos descripta en
+`supabase/README.md`; no hay que aplicar ningún SQL aparte. La asignación del
+primer administrador no está versionada (ver `supabase/README.md`).
 Usar el panel de administración
 Con el rol admin, va a aparecer un botón "Administración" en el encabezado.
 Ahí ves nombre, mail y rol de cada usuario, y podés cambiarlo con el
@@ -149,8 +140,6 @@ privada, para que ninguna futura función social pueda exponerlos por
 accidente — la identidad del vino (nombre, bodega, foto, etc.) y la
 experiencia personal quedan en tablas distintas a propósito.
 VIEWER ya no tiene Cava propia: solo EDITOR y ADMIN cargan y ven vinos.
-Aplicar (una sola vez, en Supabase → SQL Editor):
-`supabase/migration_mi_cava_privada.sql`. Migra precio/stock de los vinos
-existentes sin perder nada, y deja creada la tabla `consumos` y la función
-`registrar_consumo` (base para "Tomar una" — el botón en la interfaz todavía
-no está construido, queda para la próxima etapa).
+Las tablas `wine_privado` y `consumos` y la función `registrar_consumo`
+forman parte de la base de datos descripta en `supabase/README.md`; no hay
+que aplicar ningún SQL aparte.
