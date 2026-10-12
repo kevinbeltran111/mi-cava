@@ -253,6 +253,15 @@ function findDuplicateMatches(draft, existingWines) {
   });
 }
 
+// UX-20: un vino "guardado" es el que está en la biblioteca sin stock y sin
+// ningún consumo registrado. Se deriva SIEMPRE del estado actual (no hay
+// campo propio en la base): si después se compra (stock > 0) o se prueba
+// (consumos > 0), deja de serlo automáticamente. Única fuente de verdad
+// para el badge "🔖 Guardado" de WineCard y para el filtro "Guardados".
+function esGuardado(w) {
+  return (w?.stock ?? 0) === 0 && (w?.vecesConsumido ?? 0) === 0;
+}
+
 // ---------- Login (link mágico) ----------
 function LoginModal({ onClose }) {
   const [email, setEmail] = useState("");
@@ -2411,7 +2420,7 @@ function WineCard({ wine, onClick, clickable }) {
             if (stock === 0) {
               // UX-20 (D1): stock 0 + 0 consumos = vino guardado (nunca
               // tomado); stock 0 + consumos > 0 = Tomado (sin cambios).
-              const guardado = (wine.vecesConsumido ?? 0) === 0;
+              const guardado = esGuardado(wine);
               return (
                 <span style={{ position: "absolute", top: 6, right: 6, background: "#8B8578", color: "#fff", fontSize: 10.5, fontWeight: 700, padding: "3px 7px", borderRadius: 999 }}>
                   {guardado ? "🔖 Guardado" : "⚪ Tomado"}
@@ -3037,7 +3046,13 @@ export default function App() {
     const matchesVarietal = !filterVarietal || w.varietal === filterVarietal;
     const matchesAnada = !filterAnada || String(w.anada) === String(filterAnada);
     const stock = w.stock ?? 0;
-    const matchesEstado = filterEstado === "todos" || (filterEstado === "con" ? stock > 0 : (w.vecesConsumido ?? 0) > 0);
+    // UX-20: "guardados" = stock 0 y 0 consumos (ver esGuardado). Las otras
+    // tres opciones conservan exactamente su lógica anterior.
+    const matchesEstado =
+      filterEstado === "todos" ||
+      (filterEstado === "con" && stock > 0) ||
+      (filterEstado === "sin" && (w.vecesConsumido ?? 0) > 0) ||
+      (filterEstado === "guardados" && esGuardado(w));
     const matchesFavorito = !filterFavorito || w.favorito;
 
     return matchesSearch && matchesRegion && matchesLugar && matchesBodega && matchesVarietal && matchesAnada && matchesEstado && matchesFavorito;
@@ -3259,6 +3274,7 @@ export default function App() {
                   <option value="todos">Todos</option>
                   <option value="con">Tengo</option>
                   <option value="sin">Tomé</option>
+                  <option value="guardados">Guardados</option>
                 </select>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: INK, cursor: "pointer" }}>
                   <input type="checkbox" checked={filterFavorito} onChange={(e) => setFilterFavorito(e.target.checked)} />
