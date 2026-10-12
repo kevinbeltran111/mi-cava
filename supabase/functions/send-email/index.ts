@@ -84,7 +84,7 @@ interface SendEmailHookPayload {
 
 // Escapa cualquier dato dinámico que vaya a texto dentro del HTML. Hoy el
 // único dato realmente dinámico que insertamos es la URL de verificación
-// (como atributo href, vía encodeURI más abajo) — esta función queda lista
+// (como atributo href, escapada con esta misma función) — queda lista
 // igual por si en el futuro se interpola algo más (nombre, email, etc.),
 // para no depender de que cada punto de uso se acuerde de escapar.
 function escapeHtml(value: string): string {
@@ -150,10 +150,14 @@ function renderEmailHtml(content: EmailContent, verifyUrl: string): string {
   const safeTitle = escapeHtml(content.title);
   const safeText = escapeHtml(content.text);
   const safeCta = escapeHtml(content.ctaLabel);
-  // encodeURI protege el atributo href ante caracteres que romperían el
-  // HTML (comillas, espacios, etc.) — además de la codificación que ya
-  // aplica URLSearchParams en buildVerifyUrl.
-  const safeHref = encodeURI(verifyUrl);
+  // `verifyUrl` ya viene correctamente URL-encodeada por buildVerifyUrl
+  // (URLSearchParams codifica cada parámetro una sola vez). Acá solo hace
+  // falta escapar HTML para el atributo href — NO volver a URL-encodear:
+  // encodeURI convertía cada "%" en "%25", dejando `redirect_to`
+  // doblemente codificado; Supabase lo descartaba en /verify y redirigía
+  // siempre al Site URL. Con escapeHtml el navegador/cliente de email
+  // decodifica las entidades (&amp; → &) y abre exactamente verifyUrl.
+  const safeHref = escapeHtml(verifyUrl);
 
   return `<!doctype html>
 <html lang="es">
