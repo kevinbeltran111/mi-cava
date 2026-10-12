@@ -240,12 +240,26 @@ function findDuplicateMatches(draft, existingWines) {
   if (!nombreDraft || !bodegaDraft || !anadaDraft) return [];
 
   return (existingWines || []).filter((w) => {
+    // UX-20 (D8): el propio vino del borrador nunca es "duplicado de sí
+    // mismo". Puede aparecer en la lista si un intento anterior de este
+    // mismo alta ya creó la fila en `wines` y falló un paso posterior
+    // (wine_privado o el consumo de "Lo estoy probando").
+    if (draft?.id && w?.id === draft.id) return false;
     const anadaExistente = w?.anada != null && w.anada !== "" ? String(w.anada).trim() : "";
     if (!anadaExistente || anadaExistente !== anadaDraft) return false;
     if (normalizarTexto(w?.nombre) !== nombreDraft) return false;
     if (normalizarTexto(w?.bodega) !== bodegaDraft) return false;
     return true;
   });
+}
+
+// UX-20: un vino "guardado" es el que está en la biblioteca sin stock y sin
+// ningún consumo registrado. Se deriva SIEMPRE del estado actual (no hay
+// campo propio en la base): si después se compra (stock > 0) o se prueba
+// (consumos > 0), deja de serlo automáticamente. Única fuente de verdad
+// para el badge "🔖 Guardado" de WineCard y para el filtro "Guardados".
+function esGuardado(w) {
+  return (w?.stock ?? 0) === 0 && (w?.vecesConsumido ?? 0) === 0;
 }
 
 // ---------- Login (link mágico) ----------
@@ -433,7 +447,7 @@ function ProfileSetup({ onSubmit }) {
 }
 
 // ---------- Wine form/detail modal ----------
-function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines, onSave, onDelete, onRate, onAbrir, onSaveExperiencia, onToggleFavorito, onAgregarBotella, onCancel }) {
+function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines, onSave, onDelete, onRate, onAbrir, onSaveExperiencia, onRegistrarExperiencia, onToggleFavorito, onAgregarBotella, onOpenWine, onCancel }) {
   const isNew = !wine;
   const isAuthor = isNew || (wine.userId === myUserId && canEdit);
   // UX-08: separa consulta (ficha de solo lectura) de edición dentro del
@@ -509,6 +523,30 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
   const [duplicateMatch, setDuplicateMatch] = useState(null);
   const [addingToExisting, setAddingToExisting] = useState(false);
   const [addToExistingError, setAddToExistingError] = useState(null);
+
+  // ---- UX-20: intención del alta (solo isNew) ----
+  // "probando" | "tengo" | "guardar". Sin preselección (D3): Guardar queda
+  // deshabilitado hasta que el usuario elija conscientemente una opción.
+  const [intencion, setIntencion] = useState(null);
+  // Experiencia opcional del alta "Lo estoy probando" (D4). Se escribe en
+  // `consumos` recién cuando el usuario confirma Guardar.
+  const [altaPuntuacion, setAltaPuntuacion] = useState(0);
+  const [altaComida, setAltaComida] = useState("");
+  const [altaComentario, setAltaComentario] = useState("");
+  // UX-20 (D8): true si un intento anterior de ESTE alta ya creó el vino
+  // (wines + wine_privado) y falló un paso posterior. En el reintento no se
+  // vuelve a evaluar UX-19 (el vino ya existe y es este mismo).
+  const [vinoCreadoEnAlta, setVinoCreadoEnAlta] = useState(false);
+
+  // ---- UX-20 (D6): "Probé este vino" desde la ficha existente ----
+  // Experiencia sin stock: nunca toca wine_privado. El consumo se crea
+  // recién al confirmar el formulario (no hay DELETE sobre consumos).
+  const [showProbeForm, setShowProbeForm] = useState(false);
+  const [probePuntuacion, setProbePuntuacion] = useState(0);
+  const [probeComida, setProbeComida] = useState("");
+  const [probeComentario, setProbeComentario] = useState("");
+  const [savingProbe, setSavingProbe] = useState(false);
+  const [probeError, setProbeError] = useState(null);
 
   const loadExperiencias = async () => {
     if (isNew) return;
@@ -617,6 +655,43 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
     }
     return result;
   };
+
+  // UX-20 (D6): cierra el formulario de "Probé este vino" descartando lo
+  // escrito (no se creó nada todavía: el consumo solo existe tras confirmar).
+  const closeProbeForm = () => {
+    setShowProbeForm(false);
+    setProbePuntuacion(0);
+    setProbeComida("");
+    setProbeComentario("");
+    setProbeError(null);
+  };
+
+  // UX-20 (D6): crea un consumo sin tocar stock. Ante error, el formulario
+  // queda abierto con lo escrito intacto y el motivo visible.
+  const handleProbeSave = async () => {
+    setSavingProbe(true);
+    setProbeError(null);
+    const result = await onRegistrarExperiencia(draft.id, {
+      puntuacion: probePuntuacion > 0 ? probePuntuacion : null,
+      comida: probeComida.trim() || null,
+      comentario: probeComentario.trim() || null,
+    });
+    setSavingProbe(false);
+    if (result?.ok) {
+      closeProbeForm();
+      await loadExperiencias();
+    } else {
+      setProbeError(result?.error || "No se pudo registrar la experiencia. Probá de nuevo.");
+    }
+  };
+
+  // UX-20 (D4): experiencia opcional del alta "Lo estoy probando". Solo se
+  // informan los campos que el usuario completó.
+  const experienciaAlta = () => ({
+    puntuacion: altaPuntuacion > 0 ? altaPuntuacion : null,
+    comida: altaComida.trim() || null,
+    comentario: altaComentario.trim() || null,
+  });
 
   const update = (key, val) => setDraft((w) => ({ ...w, [key]: val }));
   const setStock = (val) => setDraft((w) => ({ ...w, stock: Math.max(0, Math.round(Number(val) || 0)) }));
@@ -754,7 +829,8 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
     }
   };
 
-  const canSave = draft.nombre.trim().length > 0 && !processingPhoto && !saving;
+  // UX-20 (D3): en un alta, además, hace falta haber elegido una intención.
+  const canSave = draft.nombre.trim().length > 0 && !processingPhoto && !saving && (!isNew || intencion != null);
   const ratingsEntries = Object.entries(wine?.ratings || {}).filter(([id]) => id !== myUserId);
   // UX-08: se muestra el formulario editable cuando es un alta nueva, o
   // cuando es un vino existente en modo edición y el usuario tiene permiso
@@ -791,6 +867,41 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
       // onRate/handleRate como efecto colateral. La tabla, sus datos
       // históricos y la función handleRate quedan intactos, simplemente no
       // se llaman más desde aquí.
+      if (isNew) {
+        // UX-20: el stock inicial depende de la intención elegida. Solo
+        // "Lo tengo en mi cava" incorpora botellas (mínimo 1). "Solo quiero
+        // guardarlo" y "Lo estoy probando" quedan con stock 0 — nunca se
+        // simula +1/−1. El precio se conserva tal como esté en el borrador
+        // en las tres intenciones (D7).
+        const draftAGuardar = {
+          ...draft,
+          stock: intencion === "tengo" ? Math.max(1, Math.round(Number(draft.stock) || 0)) : 0,
+        };
+        if (intencion === "probando") {
+          // `mantenerAbierto`: App no cierra el modal todavía, porque falta
+          // crear el consumo. Si el consumo falla, el vino ya existe (estado
+          // válido: guardado) y el modal queda abierto para reintentar.
+          const result = await onSave(draftAGuardar, photoBlob, true, { mantenerAbierto: true });
+          if (!result?.ok) {
+            setSubmitError(result?.error || "No se pudo guardar. Revisá tu conexión y probá de nuevo.");
+            return;
+          }
+          setVinoCreadoEnAlta(true);
+          const exp = await onRegistrarExperiencia(draft.id, experienciaAlta());
+          if (!exp?.ok) {
+            setSubmitError("El vino quedó guardado en tu cava, pero no se pudo registrar la experiencia. Probá de nuevo.");
+            return;
+          }
+          onCancel();
+          return;
+        }
+        const result = await onSave(draftAGuardar, photoBlob, true);
+        if (!result?.ok) {
+          setSubmitError(result?.error || "No se pudo guardar. Revisá tu conexión y probá de nuevo.");
+        }
+        // Éxito: App ya cierra el modal (handleSave), igual que antes.
+        return;
+      }
       const result = await onSave(draft, photoBlob, isNew);
       if (result?.ok) {
         if (!isNew) {
@@ -821,7 +932,10 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
   // de duplicados preexistentes, no resuelto automáticamente por ahora),
   // se procede con el guardado normal sin mostrar advertencia.
   const handleSubmit = async () => {
-    if (isNew) {
+    // UX-20 (D8): si este mismo alta ya creó el vino en un intento anterior,
+    // el reintento no vuelve a evaluar duplicados — solo completa lo que
+    // faltó (ver performSave).
+    if (isNew && !vinoCreadoEnAlta) {
       const matches = findDuplicateMatches(draft, existingWines);
       if (matches.length === 1) {
         setDuplicateMatch(matches[0]);
@@ -849,8 +963,31 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
   // permanece abierto, con el draft intacto, mostrando un error reintentable.
   const handleAddToExisting = async () => {
     if (!duplicateMatch) return;
+    // UX-20 (D5) — "Solo quiero guardarlo": el vino ya está en la cava, no
+    // se escribe nada (ni stock, ni precio, ni consumos). Se lleva al
+    // usuario a la ficha existente.
+    if (intencion === "guardar") {
+      onOpenWine(duplicateMatch);
+      return;
+    }
     setAddingToExisting(true);
     setAddToExistingError(null);
+    // UX-20 (D5) — "Lo estoy probando": la experiencia se registra sobre la
+    // ficha existente. Regla estricta: nunca modifica stock (aunque el vino
+    // existente tenga stock > 0) ni precio.
+    if (intencion === "probando") {
+      try {
+        const exp = await onRegistrarExperiencia(duplicateMatch.id, experienciaAlta());
+        if (!exp?.ok) {
+          setAddToExistingError("No se pudo registrar la experiencia en el vino existente. Probá de nuevo.");
+          return;
+        }
+        onCancel();
+      } finally {
+        setAddingToExisting(false);
+      }
+      return;
+    }
     try {
       const precioDraft = draft.precio !== "" && draft.precio != null ? Number(draft.precio) : null;
       const nuevoPrecio = precioDraft != null && !Number.isNaN(precioDraft) ? precioDraft : null;
@@ -921,13 +1058,16 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
       if (confirmAbrir) { setConfirmAbrir(false); return; }
       if (showDeleteConfirm) { setShowDeleteConfirm(false); return; }
       if (isNew) return; // alta: sin cambios, fuera de alcance de esta tarea
+      // UX-20: el formulario de "Probé este vino" es otra capa — Escape lo
+      // cierra (descartando lo escrito, nada se guardó) sin cerrar la ficha.
+      if (showProbeForm) { if (!savingProbe) closeProbeForm(); return; }
       if (showEditForm) { handleCancelEdit(); return; }
       onCancel();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPhotoZoom, showPhotoSourceSheet, showAgregarBotellaDialog, confirmAbrir, showDeleteConfirm, isNew, showEditForm, persisted, wine, onCancel]);
+  }, [showPhotoZoom, showPhotoSourceSheet, showAgregarBotellaDialog, confirmAbrir, showDeleteConfirm, isNew, showEditForm, showProbeForm, savingProbe, persisted, wine, onCancel]);
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(43,33,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 50 }} onClick={onCancel}>
@@ -967,7 +1107,7 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
                 mientras "Abrir una botella" tiene un resultado pendiente de
                 responder ("Ahora no" / "Contar cómo estuvo"), para no
                 esconder ese paso al entrar a edición. */}
-            {!isNew && isAuthor && viewMode === "view" && !abrirResultado && (
+            {!isNew && isAuthor && viewMode === "view" && !abrirResultado && !showProbeForm && (
               <button
                 onClick={() => setViewMode("edit")}
                 style={{ background: "none", border: "none", cursor: "pointer", color: BORDEAUX, padding: 4 }}
@@ -1114,8 +1254,13 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
                 <p style={{ margin: 0, color: MUTED }}>{duplicateMatch.bodega} · {duplicateMatch.anada}</p>
                 <p style={{ margin: "8px 0 0" }}>Stock actual: <strong>{duplicateMatch.stock ?? 0}</strong></p>
                 <p style={{ margin: 0 }}>Veces tomado: <strong>{duplicateMatch.vecesConsumido ?? 0}</strong></p>
-                <p style={{ margin: 0 }}>Cantidad a incorporar: <strong>{draft.stock ?? 0}</strong></p>
-                {draft.precio !== "" && draft.precio != null && (
+                {/* UX-20 (D5): cantidad y precio solo aplican a "Lo tengo en
+                    mi cava" — es la única intención que escribe sobre el
+                    vino existente. Guardar y Probando no tocan stock ni precio. */}
+                {intencion === "tengo" && (
+                  <p style={{ margin: 0 }}>Cantidad a incorporar: <strong>{draft.stock ?? 0}</strong></p>
+                )}
+                {intencion === "tengo" && draft.precio !== "" && draft.precio != null && (
                   <p style={{ margin: "8px 0 0", paddingTop: 8, borderTop: `1px solid ${BORDER}` }}>
                     Precio pagado: <strong>${draft.precio}</strong>
                     <br />
@@ -1179,43 +1324,79 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
                 <input style={inputStyle} value={draft.maridaje} onChange={(e) => update("maridaje", e.target.value)} placeholder="Ej: Carnes rojas, quesos curados" />
               </Field>
 
+              {/* UX-20: decisión de intención — reemplaza al bloque "Tu
+                  botella". Sin preselección (D3). Solo "Lo tengo en mi cava"
+                  pide cantidad (mín. 1). El precio queda editable en las tres
+                  intenciones (D7). "Lo estoy probando" ofrece la experiencia
+                  opcional en esta misma pantalla (D4). */}
               <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 4 }}>
-                <h3 style={{ fontFamily: SERIF, fontSize: 15, color: INK, margin: "0 0 10px" }}>Tu botella</h3>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <Field label="Cantidad">
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <button
-                          type="button"
-                          onClick={() => setStock((draft.stock ?? 0) - 1)}
-                          style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, fontSize: 18, cursor: "pointer", flexShrink: 0 }}
-                        >
-                          −
-                        </button>
-                        <input
-                          style={{ ...inputStyle, textAlign: "center" }}
-                          type="number"
-                          min="0"
-                          step="1"
-                          value={draft.stock ?? 0}
-                          onChange={(e) => setStock(e.target.value)}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setStock((draft.stock ?? 0) + 1)}
-                          style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, fontSize: 18, cursor: "pointer", flexShrink: 0 }}
-                        >
-                          +
-                        </button>
-                      </div>
-                    </Field>
+                <IntencionSelector
+                  value={intencion}
+                  onChange={(v) => {
+                    setIntencion(v);
+                    if (v === "tengo" && (Number(draft.stock) || 0) < 1) setStock(1);
+                  }}
+                />
+
+                {intencion === "tengo" && (
+                  <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+                    <div style={{ flex: 1 }}>
+                      <Field label="Cantidad">
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <button
+                            type="button"
+                            onClick={() => setStock(Math.max(1, (draft.stock ?? 1) - 1))}
+                            style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, fontSize: 18, cursor: "pointer", flexShrink: 0 }}
+                          >
+                            −
+                          </button>
+                          <input
+                            style={{ ...inputStyle, textAlign: "center" }}
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={draft.stock ?? 1}
+                            onChange={(e) => setStock(e.target.value)}
+                            onBlur={() => { if ((Number(draft.stock) || 0) < 1) setStock(1); }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setStock((draft.stock ?? 0) + 1)}
+                            style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${BORDER}`, background: "#FFFDFA", color: INK, fontSize: 18, cursor: "pointer", flexShrink: 0 }}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </Field>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <Field label="Precio pagado (opcional)">
+                        <input style={inputStyle} type="number" value={draft.precio} onChange={(e) => update("precio", e.target.value)} placeholder="Ej: 12000" />
+                      </Field>
+                    </div>
                   </div>
-                  <div style={{ flex: 1 }}>
+                )}
+
+                {intencion === "probando" && (
+                  <div style={{ marginTop: 16 }}>
+                    <ExperienciaCampos
+                      puntuacion={altaPuntuacion}
+                      onPuntuacion={setAltaPuntuacion}
+                      comida={altaComida}
+                      onComida={setAltaComida}
+                      comentario={altaComentario}
+                      onComentario={setAltaComentario}
+                    />
+                  </div>
+                )}
+
+                {(intencion === "probando" || intencion === "guardar") && (
+                  <div style={{ marginTop: intencion === "guardar" ? 16 : 0 }}>
                     <Field label="Precio pagado (opcional)">
                       <input style={inputStyle} type="number" value={draft.precio} onChange={(e) => update("precio", e.target.value)} placeholder="Ej: 12000" />
                     </Field>
                   </div>
-                </div>
+                )}
               </div>
             </>
           ) : (
@@ -1412,7 +1593,7 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
               el resumen. Se mantiene igual cuando hay un `abrirResultado`
               pendiente de responder, aunque la apertura haya dejado el
               stock en 0 (para no cortar ese paso a mitad de camino). */}
-          {!isNew && isAuthor && !showEditForm && (abrirResultado || (draft.stock ?? 0) > 0) && (
+          {!isNew && isAuthor && !showEditForm && !showProbeForm && (abrirResultado || (draft.stock ?? 0) > 0) && (
             <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 4 }}>
               {abrirResultado ? (
                 abrirResultado.error ? (
@@ -1460,6 +1641,61 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
             </div>
           )}
 
+          {/* ---- UX-20 (D6): "Probé este vino" ----
+              Acción secundaria para registrar una experiencia SIN stock —
+              nunca toca wine_privado. Disponible con stock 0 y con stock > 0.
+              Con stock, "Abrir una botella" (arriba) conserva la jerarquía
+              principal. Se oculta mientras "Abrir" tiene un resultado
+              pendiente, para no mezclar los dos caminos. El consumo se crea
+              recién al confirmar "Guardar experiencia". */}
+          {!isNew && isAuthor && !showEditForm && !abrirResultado && (() => {
+            const abrirVisible = !showProbeForm && (draft.stock ?? 0) > 0;
+            return (
+              <div style={abrirVisible ? { marginTop: 10 } : { borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 4 }}>
+                {showProbeForm ? (
+                  <div style={{ background: CREAM, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 14 }}>
+                    <ExperienciaCampos
+                      puntuacion={probePuntuacion}
+                      onPuntuacion={setProbePuntuacion}
+                      comida={probeComida}
+                      onComida={setProbeComida}
+                      comentario={probeComentario}
+                      onComentario={setProbeComentario}
+                    />
+                    {probeError && (
+                      <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "9px 12px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+                        {probeError}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <button
+                        disabled={savingProbe}
+                        onClick={closeProbeForm}
+                        style={{ flex: 1, minHeight: 44, borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", color: INK, cursor: savingProbe ? "default" : "pointer", fontSize: 14 }}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        disabled={savingProbe}
+                        onClick={handleProbeSave}
+                        style={{ flex: 1, minHeight: 44, borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, fontWeight: 600, cursor: savingProbe ? "default" : "pointer", fontSize: 14, opacity: savingProbe ? 0.7 : 1 }}
+                      >
+                        {savingProbe ? "Guardando..." : "Guardar experiencia"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setProbeError(null); setShowProbeForm(true); }}
+                    style={{ width: "100%", minHeight: 44, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 10, border: `1px solid ${BORDEAUX}`, background: "none", color: BORDEAUX, fontWeight: 600, fontSize: 14, cursor: "pointer" }}
+                  >
+                    Probé este vino
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+
           {/* UX-08: la puntuación general (ratings) ya no forma parte de la
               UX, ni en el alta ni en la edición — se eliminó del render por
               completo (no se oculta detrás de ninguna opción). ratings,
@@ -1490,10 +1726,9 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
                   <Loader2 size={18} color={MUTED} style={{ animation: "spin 0.8s linear infinite" }} />
                 </div>
               ) : experiencias.length === 0 ? (
-                <>
-                  <p style={{ margin: "0 0 4px", color: MUTED, fontSize: 13 }}>Todavía no registraste ninguna experiencia con este vino.</p>
-                  <p style={{ margin: 0, color: MUTED, fontSize: 13 }}>Cuando abras una botella, podés contar cómo estuvo.</p>
-                </>
+                // UX-20 (D2): copy que no presupone abrir una botella —
+                // vale con o sin stock.
+                <p style={{ margin: 0, color: MUTED, fontSize: 13 }}>Todavía no registraste ninguna experiencia con este vino.</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {experiencias.map((exp) => (
@@ -1534,7 +1769,13 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
                 onClick={handleAddToExisting}
                 style={{ padding: "11px 0", borderRadius: 8, border: "none", background: BORDEAUX, color: CREAM, cursor: addingToExisting ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 600, opacity: addingToExisting ? 0.7 : 1 }}
               >
-                {addingToExisting ? "Agregando..." : "Agregar a este vino"}
+                {/* UX-20 (D5): la acción principal depende de la intención.
+                    "Tengo" conserva el comportamiento y copy de UX-19. */}
+                {intencion === "guardar"
+                  ? "Ver este vino"
+                  : intencion === "probando"
+                  ? (addingToExisting ? "Registrando..." : "Registrar en este vino")
+                  : (addingToExisting ? "Agregando..." : "Agregar a este vino")}
               </button>
               <button
                 disabled={addingToExisting}
@@ -1756,6 +1997,86 @@ function AgregarBotellaDialog({ cantidad, onChangeCantidad, saving, error, onCon
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------- UX-20: selector de intención del alta ----------
+// Tres opciones excluyentes, sin preselección (D3). Targets táctiles de
+// 48px de alto, apilados a ancho completo (mobile-first).
+const INTENCIONES = [
+  { value: "probando", label: "Lo estoy probando" },
+  { value: "tengo", label: "Lo tengo en mi cava" },
+  { value: "guardar", label: "Solo quiero guardarlo" },
+];
+
+function IntencionSelector({ value, onChange }) {
+  return (
+    <div role="radiogroup" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {INTENCIONES.map((op) => {
+        const selected = value === op.value;
+        return (
+          <button
+            key={op.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(op.value)}
+            style={{
+              minHeight: 48,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "0 14px",
+              borderRadius: 10,
+              border: `1px solid ${selected ? BORDEAUX : BORDER}`,
+              background: selected ? CREAM : "#FFFDFA",
+              color: selected ? BORDEAUX : INK,
+              fontWeight: selected ? 700 : 500,
+              fontSize: 14.5,
+              textAlign: "left",
+              cursor: "pointer",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: 18,
+                height: 18,
+                borderRadius: 999,
+                border: `2px solid ${selected ? BORDEAUX : BORDER}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              {selected && <span style={{ width: 8, height: 8, borderRadius: 999, background: BORDEAUX }} />}
+            </span>
+            {op.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- UX-20: campos de una experiencia (puntuación, comida, comentario) ----------
+// Mismos campos, labels y placeholders que el formulario de experiencia de
+// "Abrir una botella" / ExperienceRow. Lo usan el alta "Lo estoy probando"
+// y "Probé este vino" — sin el copy de "Botella registrada / Te quedan N".
+function ExperienciaCampos({ puntuacion, onPuntuacion, comida, onComida, comentario, onComentario }) {
+  return (
+    <>
+      <Field label="Puntuación de esta experiencia">
+        <StarRating value={puntuacion} onChange={onPuntuacion} size={24} />
+      </Field>
+      <Field label="¿Con qué lo acompañaste?">
+        <input style={inputStyle} value={comida} onChange={(e) => onComida(e.target.value)} placeholder="Ej. asado, pastas, quesos..." />
+      </Field>
+      <Field label="Algo que quieras recordar">
+        <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical", fontFamily: SANS }} value={comentario} onChange={(e) => onComentario(e.target.value)} />
+      </Field>
+    </>
   );
 }
 
@@ -2097,9 +2418,12 @@ function WineCard({ wine, onClick, clickable }) {
           {(() => {
             const stock = wine.stock ?? 0;
             if (stock === 0) {
+              // UX-20 (D1): stock 0 + 0 consumos = vino guardado (nunca
+              // tomado); stock 0 + consumos > 0 = Tomado (sin cambios).
+              const guardado = esGuardado(wine);
               return (
                 <span style={{ position: "absolute", top: 6, right: 6, background: "#8B8578", color: "#fff", fontSize: 10.5, fontWeight: 700, padding: "3px 7px", borderRadius: 999 }}>
-                  ⚪ Tomado
+                  {guardado ? "🔖 Guardado" : "⚪ Tomado"}
                 </span>
               );
             }
@@ -2452,7 +2776,10 @@ export default function App() {
   // queda un registro en `wines` sin su `wine_privado` (visible igual vía
   // realtime aunque esta función reporte error). Documentado, no resuelto
   // acá: requeriría una función RPC transaccional, fuera de este bloque.
-  const handleSave = async (draft, photoBlob, isNewWine) => {
+  // UX-20: `opciones.mantenerAbierto` (solo lo usa el alta "Lo estoy
+  // probando") evita cerrar el modal tras guardar el vino, porque todavía
+  // falta crear el consumo. Sin ese flag, el comportamiento es el de siempre.
+  const handleSave = async (draft, photoBlob, isNewWine, opciones = {}) => {
     try {
       let foto_url = draft.foto && draft.foto.startsWith("http") ? draft.foto : null;
       if (photoBlob) {
@@ -2494,7 +2821,7 @@ export default function App() {
 
       setSaveError(false);
       await loadWines();
-      if (isNewWine) {
+      if (isNewWine && !opciones.mantenerAbierto) {
         setShowForm(false);
         setEditing(null);
       }
@@ -2526,6 +2853,33 @@ export default function App() {
       return { ok: false, error: error.message || "No se pudo guardar la experiencia. Probá de nuevo." };
     }
     return { ok: true };
+  };
+
+  // UX-20: experiencia SIN stock ("Lo estoy probando" en el alta, el mismo
+  // caso sobre un duplicado detectado, y "Probé este vino" en la ficha).
+  // INSERT directo en `consumos`, permitido por la policy existente
+  // "consumos: registrar en propio vino" (user_id propio + can_edit + vino
+  // propio). No toca wine_privado: el stock nunca cambia por esta vía.
+  // `registrar_consumo` (Abrir una botella) no se usa ni se modifica.
+  // Devuelve { ok, error } — el llamador solo avanza si ok === true.
+  const handleRegistrarExperiencia = async (wineId, { puntuacion = null, comida = null, comentario = null } = {}) => {
+    const { error } = await supabase
+      .from("consumos")
+      .insert({ wine_id: wineId, user_id: session.user.id, puntuacion, comida, comentario });
+    if (error) {
+      console.error(error);
+      return { ok: false, error: error.message || "No se pudo registrar la experiencia. Probá de nuevo." };
+    }
+    await loadWines();
+    return { ok: true };
+  };
+
+  // UX-20 (D5): abre la ficha de un vino existente desde el alta (duplicado
+  // + "Solo quiero guardarlo"). El modal se remonta por `key` (ver render),
+  // así entra en modo ficha con su propio estado limpio.
+  const handleOpenWine = (wine) => {
+    setEditing(wine);
+    setShowForm(true);
   };
 
   // UX-08C: favorito directo desde la ficha — update acotado a esa única
@@ -2692,7 +3046,13 @@ export default function App() {
     const matchesVarietal = !filterVarietal || w.varietal === filterVarietal;
     const matchesAnada = !filterAnada || String(w.anada) === String(filterAnada);
     const stock = w.stock ?? 0;
-    const matchesEstado = filterEstado === "todos" || (filterEstado === "con" ? stock > 0 : (w.vecesConsumido ?? 0) > 0);
+    // UX-20: "guardados" = stock 0 y 0 consumos (ver esGuardado). Las otras
+    // tres opciones conservan exactamente su lógica anterior.
+    const matchesEstado =
+      filterEstado === "todos" ||
+      (filterEstado === "con" && stock > 0) ||
+      (filterEstado === "sin" && (w.vecesConsumido ?? 0) > 0) ||
+      (filterEstado === "guardados" && esGuardado(w));
     const matchesFavorito = !filterFavorito || w.favorito;
 
     return matchesSearch && matchesRegion && matchesLugar && matchesBodega && matchesVarietal && matchesAnada && matchesEstado && matchesFavorito;
@@ -2911,9 +3271,10 @@ export default function App() {
                   {anadaOptions.map((a) => <option key={a} value={a}>{a}</option>)}
                 </select>
                 <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
-                  <option value="todos">Todos</option>
+                  <option value="todos">Estado: todos</option>
                   <option value="con">Tengo</option>
                   <option value="sin">Tomé</option>
+                  <option value="guardados">Guardados</option>
                 </select>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: INK, cursor: "pointer" }}>
                   <input type="checkbox" checked={filterFavorito} onChange={(e) => setFilterFavorito(e.target.checked)} />
@@ -2989,6 +3350,10 @@ export default function App() {
 
       {showForm && hasProfile && (
         <WineModal
+          // UX-20: `key` hace que pasar del alta a la ficha de un vino
+          // existente (handleOpenWine) remonte el modal con estado limpio,
+          // en vez de reutilizar el estado interno del alta.
+          key={editing ? editing.id : "nuevo"}
           wine={editing}
           myUserId={session.user.id}
           myName={profile.nombre}
@@ -3000,8 +3365,10 @@ export default function App() {
           onRate={handleRate}
           onAbrir={handleAbrir}
           onSaveExperiencia={handleSaveExperiencia}
+          onRegistrarExperiencia={handleRegistrarExperiencia}
           onToggleFavorito={handleToggleFavorito}
           onAgregarBotella={handleAgregarBotella}
+          onOpenWine={handleOpenWine}
           onCancel={() => { setShowForm(false); setEditing(null); }}
         />
       )}
