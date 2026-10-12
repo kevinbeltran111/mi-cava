@@ -3271,7 +3271,7 @@ export default function App() {
                   {anadaOptions.map((a) => <option key={a} value={a}>{a}</option>)}
                 </select>
                 <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
-                  <option value="todos">Todos</option>
+                  <option value="todos">Estado: todos</option>
                   <option value="con">Tengo</option>
                   <option value="sin">Tomé</option>
                   <option value="guardados">Guardados</option>
