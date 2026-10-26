@@ -5,6 +5,7 @@ Esta carpeta contiene la definición versionada de la base de datos de Mi Cava y
 ```
 supabase/
 ├── migrations/      ← fuente versionada del esquema (baseline + migraciones futuras)
+├── tests/           ← validación local sobre una base descartable
 ├── historico/       ← SQL antiguo, reemplazado. NO EJECUTAR.
 └── functions/
     └── send-email/  ← Edge Function del Send Email Hook de Supabase Auth
@@ -32,6 +33,26 @@ El estado de la base de datos de producción al **2026-10-10** está representad
 > Todo cambio futuro de base de datos debe quedar representado por una nueva migración versionada. Los archivos de baseline no se modifican. El procedimiento de aplicación de migraciones a producción se define separadamente.
 
 Las migraciones nuevas van en `migrations/`, con un nombre que empiece con un timestamp posterior a `20261010000001`.
+
+### Migraciones posteriores al baseline
+
+| Orden | Archivo | Contenido | Estado en producción |
+|---|---|---|---|
+| 3 | `migrations/20261025000000_etapa7_modelo_inteligencia.sql` | Etapa 7, Fase 7.1: tablas `user_preferences`, `user_knowledge`, `recommendation_sessions`, `recommendation_items`, `recommendation_events`, `analytics_identity`, con RLS, policies, privilegios y triggers. No modifica objetos del baseline. | **No aplicada.** |
+
+### Pruebas locales
+
+`tests/run_local.sh` crea una base **descartable** en un PostgreSQL 17 local, aplica `tests/local_shim.sql` (roles, `auth` y `storage` mínimos de Supabase y los default privileges documentados arriba), los baselines sin modificar y las migraciones posteriores, y corre:
+
+- una verificación de que los objetos del baseline quedan idénticos después de las migraciones (`tests/baseline_fingerprint.sql`);
+- las pruebas de Etapa 7 (`tests/etapa7_modelo_inteligencia_test.sql`): esquema, privilegios, policies, aislamiento entre usuarios, escritura, integridad y constraints;
+- la guarda que impide re-aplicar la migración de Etapa 7.
+
+```
+PGHOST=<socket o host local> PGPORT=<puerto> PGUSER=postgres ./supabase/tests/run_local.sh
+```
+
+El shim **no** es un stack de Supabase: no hay PostgREST, GoTrue ni Storage API, y `postgres` es superusuario. Validar con el shim no equivale a validar sobre `supabase start`. Nunca apuntar estos scripts a un proyecto Supabase real.
 
 ### Privilegios de tablas nuevas
 
