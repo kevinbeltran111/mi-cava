@@ -1,5 +1,9 @@
 -- Huella del catálogo de los objetos definidos por los baselines.
--- La usa run_local.sh para verificar que una migración posterior no los altera.
+-- La usan run_local.sh (antes/después de la migración) y
+-- run_supabase_local.ps1 (contra baseline_fingerprint.expected.txt) para
+-- verificar que una migración posterior no los altera.
+-- El cuerpo de las funciones se compara sin '\r', para que un checkout con
+-- CRLF (Windows, core.autocrlf=true) no produzca diferencias falsas.
 -- Solo lectura.
 with base_tables(t) as (
   values ('profiles'), ('wines'), ('wine_privado'), ('consumos'), ('ratings'),
@@ -37,7 +41,7 @@ select line from (
      or (p.schemaname = 'storage')
   union all
   select 'function|' || p.oid::regprocedure::text || '|secdef=' || p.prosecdef
-         || '|acl=' || coalesce(p.proacl::text, '') || '|' || md5(p.prosrc)
+         || '|acl=' || coalesce(p.proacl::text, '') || '|' || md5(replace(p.prosrc, E'\r', ''))
   from pg_proc p
   where p.pronamespace = 'public'::regnamespace
     and p.proname in ('is_admin', 'can_edit', 'admin_list_users', 'admin_set_role',
