@@ -1,0 +1,132 @@
+bucket|etiquetas|etiquetas|true
+column|access_requests|created_at|timestamp with time zone|notnull=true|default=now()|acl=
+column|access_requests|email_normalizado|text|notnull=false|default=lower(TRIM(BOTH FROM email))|acl=
+column|access_requests|email|text|notnull=true|default=|acl=
+column|access_requests|id|uuid|notnull=true|default=gen_random_uuid()|acl=
+column|access_requests|nombre|text|notnull=true|default=|acl=
+column|access_requests|status|text|notnull=true|default='pending'::text|acl=
+column|access_requests|updated_at|timestamp with time zone|notnull=true|default=now()|acl=
+column|consumos|comentario|text|notnull=false|default=|acl=
+column|consumos|comida|text|notnull=false|default=|acl=
+column|consumos|created_at|timestamp with time zone|notnull=true|default=now()|acl=
+column|consumos|fecha|timestamp with time zone|notnull=true|default=now()|acl=
+column|consumos|id|uuid|notnull=true|default=gen_random_uuid()|acl=
+column|consumos|puntuacion|numeric|notnull=false|default=|acl=
+column|consumos|user_id|uuid|notnull=true|default=|acl=
+column|consumos|wine_id|uuid|notnull=true|default=|acl=
+column|profiles|created_at|timestamp with time zone|notnull=true|default=now()|acl=
+column|profiles|id|uuid|notnull=true|default=|acl=
+column|profiles|nombre|text|notnull=true|default=|acl=
+column|profiles|role|text|notnull=true|default='editor'::text|acl=
+column|ratings|created_at|timestamp with time zone|notnull=true|default=now()|acl=
+column|ratings|id|uuid|notnull=true|default=gen_random_uuid()|acl=
+column|ratings|user_id|uuid|notnull=true|default=|acl=
+column|ratings|valor|numeric|notnull=true|default=|acl=
+column|ratings|wine_id|uuid|notnull=true|default=|acl=
+column|role_audit_log|changed_by|uuid|notnull=true|default=|acl=
+column|role_audit_log|created_at|timestamp with time zone|notnull=true|default=now()|acl=
+column|role_audit_log|id|uuid|notnull=true|default=gen_random_uuid()|acl=
+column|role_audit_log|new_role|text|notnull=true|default=|acl=
+column|role_audit_log|old_role|text|notnull=true|default=|acl=
+column|role_audit_log|target_user_id|uuid|notnull=true|default=|acl=
+column|wine_privado|created_at|timestamp with time zone|notnull=true|default=now()|acl=
+column|wine_privado|favorito|boolean|notnull=true|default=false|acl=
+column|wine_privado|precio|numeric|notnull=false|default=|acl=
+column|wine_privado|stock|integer|notnull=true|default=0|acl=
+column|wine_privado|user_id|uuid|notnull=true|default=|acl=
+column|wine_privado|wine_id|uuid|notnull=true|default=|acl=
+column|wines|anada|integer|notnull=false|default=|acl=
+column|wines|bodega|text|notnull=false|default=|acl=
+column|wines|created_at|timestamp with time zone|notnull=true|default=now()|acl=
+column|wines|foto_url|text|notnull=false|default=|acl=
+column|wines|id|uuid|notnull=true|default=|acl=
+column|wines|lugar|text|notnull=false|default=|acl=
+column|wines|maridaje|text|notnull=false|default=|acl=
+column|wines|nombre|text|notnull=true|default=|acl=
+column|wines|region|text|notnull=false|default=|acl=
+column|wines|user_id|uuid|notnull=true|default=|acl=
+column|wines|varietal|text|notnull=false|default=|acl=
+constraint|access_requests|access_requests_pkey|PRIMARY KEY (id)
+constraint|access_requests|access_requests_status_check|CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text])))
+constraint|consumos|consumos_pkey|PRIMARY KEY (id)
+constraint|consumos|consumos_puntuacion_check|CHECK (((puntuacion IS NULL) OR ((puntuacion >= 0.5) AND (puntuacion <= (5)::numeric))))
+constraint|consumos|consumos_user_id_fkey|FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE
+constraint|consumos|consumos_wine_id_fkey|FOREIGN KEY (wine_id) REFERENCES wines(id) ON DELETE CASCADE
+constraint|profiles|profiles_id_fkey|FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE
+constraint|profiles|profiles_pkey|PRIMARY KEY (id)
+constraint|profiles|profiles_role_check|CHECK ((role = ANY (ARRAY['admin'::text, 'editor'::text, 'viewer'::text])))
+constraint|ratings|ratings_pkey|PRIMARY KEY (id)
+constraint|ratings|ratings_profile_fkey|FOREIGN KEY (user_id) REFERENCES profiles(id)
+constraint|ratings|ratings_user_id_fkey|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE
+constraint|ratings|ratings_valor_check|CHECK (((valor >= 0.5) AND (valor <= (5)::numeric)))
+constraint|ratings|ratings_wine_id_fkey|FOREIGN KEY (wine_id) REFERENCES wines(id) ON DELETE CASCADE
+constraint|ratings|ratings_wine_id_user_id_key|UNIQUE (wine_id, user_id)
+constraint|role_audit_log|role_audit_log_changed_by_fkey|FOREIGN KEY (changed_by) REFERENCES auth.users(id)
+constraint|role_audit_log|role_audit_log_pkey|PRIMARY KEY (id)
+constraint|role_audit_log|role_audit_log_target_user_id_fkey|FOREIGN KEY (target_user_id) REFERENCES auth.users(id) ON DELETE CASCADE
+constraint|wine_privado|wine_privado_pkey|PRIMARY KEY (wine_id)
+constraint|wine_privado|wine_privado_stock_check|CHECK ((stock >= 0))
+constraint|wine_privado|wine_privado_user_id_fkey|FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE
+constraint|wine_privado|wine_privado_wine_id_fkey|FOREIGN KEY (wine_id) REFERENCES wines(id) ON DELETE CASCADE
+constraint|wines|wines_pkey|PRIMARY KEY (id)
+constraint|wines|wines_profile_fkey|FOREIGN KEY (user_id) REFERENCES profiles(id)
+constraint|wines|wines_user_id_fkey|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE
+function|admin_list_users()|secdef=true|acl={postgres=X/postgres,=X/postgres,authenticated=X/postgres}|5cf4e733849c37de096a76905ffadb1f
+function|admin_set_role(uuid,text)|secdef=true|acl={postgres=X/postgres,=X/postgres,authenticated=X/postgres}|04b755f2536b9988914ee787509e35c5
+function|can_edit(uuid)|secdef=true|acl={postgres=X/postgres,=X/postgres,anon=X/postgres,authenticated=X/postgres}|3414ac4ffceaf085fe8c7fe980198359
+function|is_admin(uuid)|secdef=true|acl={postgres=X/postgres,=X/postgres,anon=X/postgres,authenticated=X/postgres}|ad07cf0dc3aa522ee5950ae8bf587e3e
+function|prevent_consumo_reassignment()|secdef=true|acl={postgres=X/postgres,=X/postgres}|09af5c2d95850b3ecf586d7f34968068
+function|prevent_last_admin_removal()|secdef=true|acl={postgres=X/postgres,=X/postgres}|d558643f991369ed02d52a05537072ef
+function|prevent_role_self_escalation()|secdef=true|acl={postgres=X/postgres,=X/postgres}|fcc87776caec290930ae87d03f4f743c
+function|registrar_consumo(uuid,numeric,text,text)|secdef=true|acl={postgres=X/postgres,=X/postgres,authenticated=X/postgres}|2d24d7d88c3eb51fe0529ce83d8408af
+index|access_requests|CREATE UNIQUE INDEX access_requests_pkey ON public.access_requests USING btree (id)
+index|access_requests|CREATE UNIQUE INDEX idx_access_requests_pending_unico ON public.access_requests USING btree (email_normalizado) WHERE (status = 'pending'::text)
+index|consumos|CREATE INDEX idx_consumos_user_fecha ON public.consumos USING btree (user_id, fecha DESC)
+index|consumos|CREATE INDEX idx_consumos_wine ON public.consumos USING btree (wine_id)
+index|consumos|CREATE UNIQUE INDEX consumos_pkey ON public.consumos USING btree (id)
+index|profiles|CREATE UNIQUE INDEX profiles_pkey ON public.profiles USING btree (id)
+index|ratings|CREATE UNIQUE INDEX ratings_pkey ON public.ratings USING btree (id)
+index|ratings|CREATE UNIQUE INDEX ratings_wine_id_user_id_key ON public.ratings USING btree (wine_id, user_id)
+index|role_audit_log|CREATE UNIQUE INDEX role_audit_log_pkey ON public.role_audit_log USING btree (id)
+index|wine_privado|CREATE INDEX idx_wine_privado_user ON public.wine_privado USING btree (user_id)
+index|wine_privado|CREATE UNIQUE INDEX wine_privado_pkey ON public.wine_privado USING btree (wine_id)
+index|wines|CREATE INDEX idx_wines_user ON public.wines USING btree (user_id)
+index|wines|CREATE UNIQUE INDEX wines_pkey ON public.wines USING btree (id)
+policy|public.access_requests|access_requests: cualquiera solicita|INSERT|{public}||(status = 'pending'::text)
+policy|public.access_requests|access_requests: solo admin actualiza|UPDATE|{public}|is_admin(auth.uid())|is_admin(auth.uid())
+policy|public.access_requests|access_requests: solo admin lee|SELECT|{public}|is_admin(auth.uid())|
+policy|public.consumos|consumos: actualizar propio consumo|UPDATE|{public}|((auth.uid() = user_id) AND can_edit(auth.uid()))|((auth.uid() = user_id) AND can_edit(auth.uid()))
+policy|public.consumos|consumos: cada uno ve los suyos|SELECT|{public}|(auth.uid() = user_id)|
+policy|public.consumos|consumos: registrar en propio vino|INSERT|{public}||((auth.uid() = user_id) AND can_edit(auth.uid()) AND (EXISTS ( SELECT 1
+   FROM wines w
+  WHERE ((w.id = consumos.wine_id) AND (w.user_id = auth.uid())))))
+policy|public.profiles|profiles: admin actualiza cualquiera|UPDATE|{authenticated}|is_admin(auth.uid())|
+policy|public.profiles|profiles: cada uno crea la suya|INSERT|{public}||((auth.uid() = id) AND (role = 'editor'::text))
+policy|public.profiles|profiles: cada uno edita la suya|UPDATE|{public}|(auth.uid() = id)|
+policy|public.profiles|profiles: lectura publica|SELECT|{public}|true|
+policy|public.ratings|ratings: cada uno borra su puntaje|DELETE|{public}|(auth.uid() = user_id)|
+policy|public.ratings|ratings: cada uno edita su puntaje|UPDATE|{public}|(auth.uid() = user_id)|
+policy|public.ratings|ratings: cada uno ve la suya|SELECT|{public}|(auth.uid() = user_id)|
+policy|public.ratings|ratings: puntuar solo tu propio vino|INSERT|{public}||((auth.uid() = user_id) AND (EXISTS ( SELECT 1
+   FROM wines w
+  WHERE ((w.id = ratings.wine_id) AND (w.user_id = auth.uid())))))
+policy|public.role_audit_log|role_audit_log: solo admin lee|SELECT|{public}|is_admin(auth.uid())|
+policy|public.wine_privado|wine_privado: admin/editor gestiona el suyo|ALL|{public}|((auth.uid() = user_id) AND can_edit(auth.uid()))|((auth.uid() = user_id) AND can_edit(auth.uid()))
+policy|public.wine_privado|wine_privado: cada uno ve el suyo|SELECT|{public}|(auth.uid() = user_id)|
+policy|public.wines|wines: autor admin/editor borra|DELETE|{public}|((auth.uid() = user_id) AND can_edit(auth.uid()))|
+policy|public.wines|wines: autor admin/editor edita|UPDATE|{public}|((auth.uid() = user_id) AND can_edit(auth.uid()))|
+policy|public.wines|wines: cada uno ve la suya|SELECT|{public}|(auth.uid() = user_id)|
+policy|public.wines|wines: solo admin/editor crean|INSERT|{public}||((auth.uid() = user_id) AND can_edit(auth.uid()))
+policy|storage.objects|etiquetas: actualizar logueados|UPDATE|{authenticated}|(bucket_id = 'etiquetas'::text)|
+policy|storage.objects|etiquetas: borrar logueados|DELETE|{authenticated}|(bucket_id = 'etiquetas'::text)|
+policy|storage.objects|etiquetas: subir logueados|INSERT|{authenticated}||(bucket_id = 'etiquetas'::text)
+table|access_requests|rls=true|force=false|acl={postgres=arwdDxtm/postgres,anon=aDxtm/postgres,authenticated=arwDxtm/postgres,service_role=arwdDxtm/postgres}
+table|consumos|rls=true|force=false|acl={postgres=arwdDxtm/postgres,anon=Dxtm/postgres,authenticated=arwDxtm/postgres,service_role=Dxtm/postgres}
+table|profiles|rls=true|force=false|acl={postgres=arwdDxtm/postgres,anon=rDxtm/postgres,authenticated=arwDxtm/postgres,service_role=arwdDxtm/postgres}
+table|ratings|rls=true|force=false|acl={postgres=arwdDxtm/postgres,anon=rDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=Dxtm/postgres}
+table|role_audit_log|rls=true|force=false|acl={postgres=arwdDxtm/postgres,anon=Dxtm/postgres,authenticated=rDxtm/postgres,service_role=Dxtm/postgres}
+table|wine_privado|rls=true|force=false|acl={postgres=arwdDxtm/postgres,anon=Dxtm/postgres,authenticated=arwdDxtm/postgres,service_role=Dxtm/postgres}
+table|wines|rls=true|force=false|acl={postgres=arwdDxtm/postgres,anon=rDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=Dxtm/postgres}
+trigger|consumos|CREATE TRIGGER trg_prevent_consumo_reassignment BEFORE UPDATE ON public.consumos FOR EACH ROW EXECUTE FUNCTION prevent_consumo_reassignment()
+trigger|profiles|CREATE TRIGGER trg_prevent_last_admin_removal BEFORE DELETE OR UPDATE ON public.profiles FOR EACH ROW EXECUTE FUNCTION prevent_last_admin_removal()
+trigger|profiles|CREATE TRIGGER trg_prevent_role_self_escalation BEFORE UPDATE ON public.profiles FOR EACH ROW EXECUTE FUNCTION prevent_role_self_escalation()
