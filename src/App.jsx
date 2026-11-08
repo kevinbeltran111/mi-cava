@@ -20,6 +20,9 @@ import {
   ArrowLeft,
   Pencil,
   WineOff,
+  GalleryVertical,
+  LayoutGrid,
+  List,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -132,7 +135,7 @@ function StarRating({ value, onChange, size = 24, readOnly = false }) {
   );
 }
 
-function BottlePlaceholder() {
+function BottlePlaceholder({ size = 36 }) {
   return (
     <div
       style={{
@@ -144,7 +147,7 @@ function BottlePlaceholder() {
         background: `linear-gradient(160deg, ${BORDEAUX} 0%, ${BORDEAUX_DARK} 100%)`,
       }}
     >
-      <Wine size={36} color={GOLD_SOFT} strokeWidth={1.3} />
+      <Wine size={size} color={GOLD_SOFT} strokeWidth={1.3} />
     </div>
   );
 }
@@ -260,6 +263,31 @@ function findDuplicateMatches(draft, existingWines) {
 // para el badge "🔖 Guardado" de WineCard y para el filtro "Guardados".
 function esGuardado(w) {
   return (w?.stock ?? 0) === 0 && (w?.vecesConsumido ?? 0) === 0;
+}
+
+// UX-21: texto y colores del indicador de estado, extraídos tal cual de
+// WineCard para que las tres vistas de la biblioteca (Tarjetas, Cuadrícula
+// compacta, Lista compacta) muestren exactamente el mismo estado.
+// stock > 0 → "Tengo N" (dorado si N <= 2); stock 0 + 0 consumos →
+// Guardado; stock 0 + consumos → Tomado.
+function estadoVino(w) {
+  const stock = w?.stock ?? 0;
+  if (stock === 0) {
+    return { texto: esGuardado(w) ? "🔖 Guardado" : "⚪ Tomado", background: "#8B8578", color: "#fff" };
+  }
+  // "Tengo " y el número van como dos textos separados, igual que el JSX
+  // original de WineCard (`🟢 Tengo {stock}`), para un render idéntico.
+  return { texto: "🟢 Tengo ", numero: stock, background: stock <= 2 ? GOLD : "#4A8B5C", color: stock <= 2 ? BORDEAUX_DARK : "#fff" };
+}
+
+function EstadoBadge({ wine, style }) {
+  const e = estadoVino(wine);
+  return (
+    <span style={{ background: e.background, color: e.color, fontSize: 10.5, fontWeight: 700, padding: "3px 7px", borderRadius: 999, ...style }}>
+      {e.texto}
+      {e.numero}
+    </span>
+  );
 }
 
 // ---------- Login (link mágico) ----------
@@ -2392,6 +2420,15 @@ function AdminPanel({ myUserId, accessToken, onClose }) {
 }
 
 function WineCard({ wine, onClick, clickable }) {
+  // UX-21: apertura por teclado (Enter / Espacio). Sin cambios visuales: el
+  // foco solo se marca con :focus-visible (ver UX21_CSS).
+  const onKeyDown = (e) => {
+    if (!clickable) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onClick();
+    }
+  };
   // UX-08: la puntuación visible de la tarjeta deja de leer `ratings` y pasa
   // a usar el promedio derivado de consumos.puntuacion (mismo cálculo que
   // en la ficha de WineModal, ya resuelto en loadWines).
@@ -2399,7 +2436,12 @@ function WineCard({ wine, onClick, clickable }) {
   const count = wine.experienciasPuntuadas || 0;
   return (
     <div
+      className="ux21-card"
       onClick={clickable ? onClick : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      aria-label={clickable ? wine.nombre : undefined}
+      onKeyDown={onKeyDown}
       style={{ background: CARD_BG, borderRadius: 12, border: `1px solid ${BORDER}`, overflow: "hidden", cursor: clickable ? "pointer" : "default", transition: "box-shadow 0.15s ease, border-color 0.15s ease", display: "flex", flexDirection: "column" }}
       onMouseEnter={(e) => {
         if (!clickable) return;
@@ -2414,25 +2456,10 @@ function WineCard({ wine, onClick, clickable }) {
     >
       <div style={{ padding: "16px 16px 0" }}>
         <div style={{ width: "62%", margin: "0 auto", aspectRatio: "4 / 5", borderRadius: 8, overflow: "hidden", border: `1px solid ${BORDER}`, boxShadow: "0 3px 10px rgba(74,20,32,0.08)", position: "relative" }}>
-          {wine.foto ? <img src={wine.foto} alt={wine.nombre} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <BottlePlaceholder />}
-          {(() => {
-            const stock = wine.stock ?? 0;
-            if (stock === 0) {
-              // UX-20 (D1): stock 0 + 0 consumos = vino guardado (nunca
-              // tomado); stock 0 + consumos > 0 = Tomado (sin cambios).
-              const guardado = esGuardado(wine);
-              return (
-                <span style={{ position: "absolute", top: 6, right: 6, background: "#8B8578", color: "#fff", fontSize: 10.5, fontWeight: 700, padding: "3px 7px", borderRadius: 999 }}>
-                  {guardado ? "🔖 Guardado" : "⚪ Tomado"}
-                </span>
-              );
-            }
-            return (
-              <span style={{ position: "absolute", top: 6, right: 6, background: stock <= 2 ? GOLD : "#4A8B5C", color: stock <= 2 ? BORDEAUX_DARK : "#fff", fontSize: 10.5, fontWeight: 700, padding: "3px 7px", borderRadius: 999 }}>
-                🟢 Tengo {stock}
-              </span>
-            );
-          })()}
+          {wine.foto ? <img src={wine.foto} alt={wine.nombre} loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <BottlePlaceholder />}
+          {/* UX-20 (D1) / UX-21: mismo estado y estilo que antes, ahora
+              compartido con las vistas compactas vía estadoVino(). */}
+          <EstadoBadge wine={wine} style={{ position: "absolute", top: 6, right: 6 }} />
         </div>
       </div>
       <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
@@ -2491,6 +2518,159 @@ function WineCard({ wine, onClick, clickable }) {
   );
 }
 
+// ---------- UX-21: vistas de la biblioteca ----------
+// Tres modos de visualización sobre la MISMA lista ya filtrada y ordenada
+// (`sorted` en App): no hay lógica de búsqueda/filtros/orden por vista. Los
+// tres abren la misma ficha (abrirVino en App). La preferencia vive solo en
+// localStorage de este navegador; ante cualquier valor inválido o error de
+// acceso se usa "tarjetas".
+const VISTAS = [
+  { id: "tarjetas", label: "Tarjetas", Icon: GalleryVertical },
+  { id: "cuadricula", label: "Cuadrícula compacta", Icon: LayoutGrid },
+  { id: "lista", label: "Lista compacta", Icon: List },
+];
+const VISTA_STORAGE_KEY = "micava.vista";
+const VISTA_DEFAULT = "tarjetas";
+
+function leerVistaGuardada() {
+  try {
+    const v = window.localStorage.getItem(VISTA_STORAGE_KEY);
+    return VISTAS.some((x) => x.id === v) ? v : VISTA_DEFAULT;
+  } catch {
+    return VISTA_DEFAULT;
+  }
+}
+
+function guardarVista(v) {
+  try {
+    window.localStorage.setItem(VISTA_STORAGE_KEY, v);
+  } catch {
+    // Sin almacenamiento disponible (p. ej. navegación privada estricta): la
+    // vista elegida vale solo para esta sesión.
+  }
+}
+
+function VistaSelector({ value, onChange }) {
+  return (
+    <div className="ux21-sel" role="group" aria-label="Vista de la biblioteca">
+      {VISTAS.map(({ id, label, Icon }) => (
+        <button key={id} type="button" aria-label={label} title={label} aria-pressed={value === id} onClick={() => onChange(id)}>
+          <Icon size={17} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Bodega · añada en una línea: la bodega se recorta con "…", la añada nunca.
+function BodegaAnada({ wine, className }) {
+  if (!wine.bodega && !wine.anada) return <div className={className}>&nbsp;</div>;
+  return (
+    <div className={className}>
+      {wine.bodega && <span className="ux21-sb">{wine.bodega}</span>}
+      {wine.anada && <span className="ux21-sa">{wine.bodega ? " · " : ""}{wine.anada}</span>}
+    </div>
+  );
+}
+
+function FavoritoIcono({ size }) {
+  return (
+    <span role="img" aria-label="Favorito" style={{ lineHeight: 0, flexShrink: 0 }}>
+      <Heart size={size} fill={DANGER} color={DANGER} aria-hidden="true" />
+    </span>
+  );
+}
+
+function WineTile({ wine, onClick }) {
+  return (
+    <button type="button" className="ux21-tile" onClick={onClick} title={wine.nombre}>
+      <div className="ux21-tile-photo">
+        {wine.foto ? <img src={wine.foto} alt="" loading="lazy" decoding="async" /> : <BottlePlaceholder size={30} />}
+        <EstadoBadge wine={wine} style={{ position: "absolute", top: 6, right: 6, whiteSpace: "nowrap" }} />
+      </div>
+      <div className="ux21-tile-body">
+        <div className="ux21-tile-name">{wine.nombre}</div>
+        {wine.favorito && <span className="ux21-tile-fav"><FavoritoIcono size={12} /></span>}
+        <BodegaAnada wine={wine} className="ux21-tile-sub" />
+      </div>
+    </button>
+  );
+}
+
+function WineRow({ wine, onClick }) {
+  return (
+    <button type="button" className="ux21-row" onClick={onClick} title={wine.nombre}>
+      <div className="ux21-row-thumb">
+        {wine.foto ? <img src={wine.foto} alt="" loading="lazy" decoding="async" /> : <BottlePlaceholder size={18} />}
+      </div>
+      <div className="ux21-row-main">
+        <div className="ux21-row-name">
+          <span className="ux21-row-name-text">{wine.nombre}</span>
+          {wine.favorito && <FavoritoIcono size={11} />}
+        </div>
+        {/* Móvil: bodega · añada y estado en la segunda línea, así el nombre
+            usa todo el ancho de la fila (clave en pantallas de 320 px). */}
+        <div className="ux21-row-line2">
+          <BodegaAnada wine={wine} className="ux21-row-sub" />
+          <EstadoBadge wine={wine} style={{ whiteSpace: "nowrap", flexShrink: 0 }} />
+        </div>
+      </div>
+      {/* Escritorio: columnas alineadas (ver @media en UX21_CSS). */}
+      <div className="ux21-row-col ux21-row-bodega">{wine.bodega || "—"}</div>
+      <div className="ux21-row-col ux21-row-anada">{wine.anada || "—"}</div>
+      <div className="ux21-row-col ux21-row-estado">
+        <EstadoBadge wine={wine} style={{ whiteSpace: "nowrap" }} />
+      </div>
+    </button>
+  );
+}
+
+const UX21_CSS = `
+.ux21-card:focus-visible { outline: 2px solid ${GOLD}; outline-offset: 2px; }
+.ux21-sel { display: inline-flex; border: 1px solid ${BORDER}; border-radius: 8px; background: #FFFDFA; padding: 2px; gap: 2px; flex-shrink: 0; }
+.ux21-sel button { width: 40px; height: 34px; display: flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: 6px; background: transparent; color: ${MUTED}; cursor: pointer; padding: 0; }
+.ux21-sel button[aria-pressed="true"] { background: ${CREAM}; border-color: ${GOLD}; color: ${BORDEAUX}; }
+.ux21-sel button:focus-visible { outline: 2px solid ${GOLD}; outline-offset: 1px; }
+.ux21-tile, .ux21-row { appearance: none; -webkit-appearance: none; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; box-sizing: border-box; min-width: 0; -webkit-tap-highlight-color: transparent; }
+.ux21-tile img, .ux21-row img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ux21-sb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ux21-sa { flex-shrink: 0; white-space: pre; font-variant-numeric: tabular-nums; }
+
+.ux21-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ux21-tile { display: flex; flex-direction: column; padding: 0; background: ${CARD_BG}; border: 1px solid ${BORDER}; border-radius: 10px; overflow: hidden; transition: box-shadow 0.15s ease, border-color 0.15s ease; }
+.ux21-tile:hover { border-color: ${GOLD}; box-shadow: 0 6px 16px rgba(74,20,32,0.10); }
+.ux21-tile:focus-visible { outline: 2px solid ${GOLD}; outline-offset: 2px; }
+.ux21-tile-photo { position: relative; width: 100%; aspect-ratio: 4 / 5; border-bottom: 1px solid ${BORDER}; overflow: hidden; }
+.ux21-tile-body { position: relative; padding: 8px 10px 10px; }
+.ux21-tile-name { font-family: ${SERIF}; font-size: 14.5px; line-height: 1.25; color: ${INK}; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.5em; padding-right: 14px; overflow-wrap: anywhere; }
+.ux21-tile-fav { position: absolute; top: 10px; right: 8px; line-height: 0; }
+.ux21-tile-sub { display: flex; margin-top: 3px; font-size: 12px; color: ${MUTED}; min-width: 0; }
+
+.ux21-list { background: ${CARD_BG}; border: 1px solid ${BORDER}; border-radius: 12px; overflow: hidden; }
+.ux21-row { width: 100%; display: grid; grid-template-columns: 44px minmax(0, 1fr); column-gap: 12px; align-items: center; padding: 8px 12px; min-height: 72px; background: transparent; border: 0; border-top: 1px solid ${BORDER}; }
+.ux21-row:first-child { border-top: 0; }
+.ux21-row:hover { background: ${CREAM}; }
+.ux21-row:focus-visible { outline: 2px solid ${GOLD}; outline-offset: -2px; }
+.ux21-row-thumb { width: 44px; aspect-ratio: 4 / 5; border-radius: 5px; overflow: hidden; border: 1px solid ${BORDER}; }
+.ux21-row-main { min-width: 0; }
+.ux21-row-name { display: flex; align-items: center; gap: 5px; min-width: 0; font-family: ${SERIF}; font-size: 15px; line-height: 1.3; color: ${INK}; }
+.ux21-row-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ux21-row-line2 { display: flex; align-items: center; gap: 8px; margin-top: 4px; min-width: 0; }
+.ux21-row-sub { display: flex; flex: 1; min-width: 0; font-size: 12.5px; color: ${MUTED}; }
+.ux21-row-col { display: none; }
+
+@media (min-width: 600px) {
+  .ux21-grid { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; }
+}
+@media (min-width: 680px) {
+  .ux21-row { grid-template-columns: 44px minmax(0, 2fr) minmax(0, 1.3fr) 56px 118px; column-gap: 16px; padding: 8px 16px; min-height: 68px; }
+  .ux21-row-line2 { display: none; }
+  .ux21-row-col { display: block; font-size: 13px; color: ${MUTED}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ux21-row-anada { font-variant-numeric: tabular-nums; }
+  .ux21-row-estado { justify-self: end; overflow: visible; }
+}
+`;
+
 export default function App() {
   const [session, setSession] = useState(undefined); // undefined = todavía no sabemos
   const [authResolved, setAuthResolved] = useState(false); // true solo cuando getSession() terminó
@@ -2522,6 +2702,13 @@ export default function App() {
   const [filterAnada, setFilterAnada] = useState("");
   const [filterEstado, setFilterEstado] = useState("todos");
   const [filterFavorito, setFilterFavorito] = useState(false);
+  // UX-21: vista de la biblioteca. Solo presentación: no toca búsqueda,
+  // filtros, orden ni el vino abierto.
+  const [vista, setVista] = useState(leerVistaGuardada);
+  const cambiarVista = (v) => {
+    setVista(v);
+    guardarVista(v);
+  };
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -2881,6 +3068,9 @@ export default function App() {
     setEditing(wine);
     setShowForm(true);
   };
+  // UX-21: las tres vistas de la biblioteca abren la ficha con esta misma
+  // función (es exactamente lo que hacía el onClick inline de WineCard).
+  const abrirVino = handleOpenWine;
 
   // UX-08C: favorito directo desde la ficha — update acotado a esa única
   // columna de wine_privado, sin pasar por el upsert completo de
@@ -3283,15 +3473,20 @@ export default function App() {
               </div>
             )}
 
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
-              <span style={{ fontSize: 12.5, color: MUTED }}>
-                {sorted.length} {sorted.length === 1 ? "vino" : "vinos"}
-              </span>
-              {hasActiveFilters && (
-                <button onClick={clearFilters} style={{ background: "none", border: "none", color: MUTED, textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: 0 }}>
-                  Limpiar filtros
-                </button>
-              )}
+            {/* UX-21: contador + "Limpiar filtros" a la izquierda, selector de
+                vista a la derecha. */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", minWidth: 0 }}>
+                <span style={{ fontSize: 12.5, color: MUTED }}>
+                  {sorted.length} {sorted.length === 1 ? "vino" : "vinos"}
+                </span>
+                {hasActiveFilters && (
+                  <button onClick={clearFilters} style={{ background: "none", border: "none", color: MUTED, textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: 0 }}>
+                    Limpiar filtros
+                  </button>
+                )}
+              </div>
+              <VistaSelector value={vista} onChange={cambiarVista} />
             </div>
           </div>
         )}
@@ -3332,6 +3527,18 @@ export default function App() {
               Limpiar filtros
             </button>
           </div>
+        ) : vista === "cuadricula" ? (
+          <div className="ux21-grid">
+            {sorted.map((wine) => (
+              <WineTile key={wine.id} wine={wine} onClick={() => abrirVino(wine)} />
+            ))}
+          </div>
+        ) : vista === "lista" ? (
+          <div className="ux21-list">
+            {sorted.map((wine) => (
+              <WineRow key={wine.id} wine={wine} onClick={() => abrirVino(wine)} />
+            ))}
+          </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 16 }}>
             {sorted.map((wine) => (
@@ -3339,11 +3546,12 @@ export default function App() {
                 key={wine.id}
                 wine={wine}
                 clickable={hasProfile}
-                onClick={() => { setEditing(wine); setShowForm(true); }}
+                onClick={() => abrirVino(wine)}
               />
             ))}
           </div>
         )}
+        <style>{UX21_CSS}</style>
         </>
         )}
       </div>
