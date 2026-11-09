@@ -5,6 +5,7 @@ Esta carpeta contiene la definición versionada de la base de datos de Mi Cava y
 ```
 supabase/
 ├── migrations/      ← fuente versionada del esquema (baseline + migraciones futuras)
+├── tests/           ← validación local sobre una base descartable
 ├── historico/       ← SQL antiguo, reemplazado. NO EJECUTAR.
 └── functions/
     └── send-email/  ← Edge Function del Send Email Hook de Supabase Auth
@@ -32,6 +33,80 @@ El estado de la base de datos de producción al **2026-10-10** está representad
 > Todo cambio futuro de base de datos debe quedar representado por una nueva migración versionada. Los archivos de baseline no se modifican. El procedimiento de aplicación de migraciones a producción se define separadamente.
 
 Las migraciones nuevas van en `migrations/`, con un nombre que empiece con un timestamp posterior a `20261010000001`.
+
+### Migraciones posteriores al baseline
+
+| Orden | Archivo | Contenido | Estado en producción |
+|---|---|---|---|
+| 3 | `migrations/20261025000000_etapa7_modelo_inteligencia.sql` | Etapa 7, Fase 7.1: tablas `user_preferences`, `user_knowledge`, `recommendation_sessions`, `recommendation_items`, `recommendation_events`, `analytics_identity`, con RLS, policies, privilegios y triggers. No modifica objetos del baseline. | **No aplicada.** |
+
+### Pruebas locales
+
+`tests/run_local.sh` crea una base **descartable** en un PostgreSQL 17 local, aplica `tests/local_shim.sql` (roles, `auth` y `storage` mínimos de Supabase y los default privileges documentados arriba), los baselines sin modificar y las migraciones posteriores, y corre:
+
+- una verificación de que los objetos del baseline quedan idénticos después de las migraciones (`tests/baseline_fingerprint.sql`);
+- las pruebas de Etapa 7 (`tests/etapa7_modelo_inteligencia_test.sql`): esquema, privilegios, policies, aislamiento entre usuarios, escritura, integridad y constraints;
+- la guarda que impide re-aplicar la migración de Etapa 7.
+
+```
+PGHOST=<socket o host local> PGPORT=<puerto> PGUSER=postgres ./supabase/tests/run_local.sh
+```
+
+El shim **no** es un stack de Supabase: no hay PostgREST, GoTrue ni Storage API, y `postgres` es superusuario. Validar con el shim no equivale a validar sobre `supabase start`. Nunca apuntar estos scripts a un proyecto Supabase real.
+
+### Pruebas sobre Supabase local (`supabase start`)
+
+`tests/run_supabase_local.ps1` (PowerShell, Windows) corre las mismas pruebas contra el contenedor de base del proyecto local de Supabase CLI, **sin** el shim y sin aplicar ni resetear migraciones: usa la base que dejó `supabase start`.
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File .\supabase\tests\run_supabase_local.ps1
+```
+
+- Verifica la branch, que `migrations/` sea idéntico al commit aprobado, que el proyecto no esté vinculado (`supabase/.temp/project-ref`) y que el contenedor `supabase_db_<project_id>` tenga la etiqueta y el puerto esperados. Si algo no coincide, aborta antes de conectarse.
+- `tests/supabase_local_preflight.sql` (solo lectura) exige: Supabase real, exactamente las tres migraciones en `supabase_migrations.schema_migrations`, tablas de Etapa 7 vacías, sin esquema `tests` y sin los UUID ficticios.
+- **Huella del baseline.** Compara `tests/baseline_fingerprint.sql` con `tests/baseline_fingerprint.expected.txt`, la huella que producen los dos baselines solos sobre PostgreSQL 17.6 + shim. Cada diferencia se clasifica:
+  - **AMBIENTAL**: solo dos reglas, que no cambian quién tiene qué privilegio. R1 es el orden de los elementos de una ACL; R2 es el rol que otorgó (*grantor*) cada elemento.
+  - **NO EXPLICADA**: cualquier otra diferencia. Impide aprobar la validación hasta analizarla.
+  - Además compara la huella **antes y después** de las pruebas en la misma instancia. Cualquier cambio es FALLA.
+- `tests/supabase_local_run_tests.sql` ejecuta `tests/etapa7_modelo_inteligencia_test.sql` dentro de una transacción que siempre termina en `ROLLBACK`.
+- **Secuencia de alias.** `analytics_alias_seq` no es transaccional:
+  - antes de las pruebas, su estado se guarda en un marcador (`%TEMP%\micava_etapa7_secuencia_pendiente_mi-cava.txt`);
+  - después se restaura con reintentos y solo se da por restaurada si una lectura posterior lo verifica;
+  - recién entonces se borra el marcador.
+- **Guarda.** Re-aplicar la migración de Etapa 7 debe abortar. Solo se intenta si las pruebas y la secuencia terminaron OK. Si las pruebas fallan, se ejecutan únicamente la restauración, la huella, el postcheck y la limpieza, y el resultado es **FALLA**.
+- Termina con `tests/supabase_local_postcheck.sql` (solo lectura): sin filas ni objetos de prueba, `auth.users` igual que antes y la secuencia en su estado previo.
+- El resultado final es `APROBADA` solo si todos los pasos dieron OK.
+
+#### Ejecución interrumpida
+
+Si el runner se corta (ventana cerrada, proceso terminado, Docker detenido) puede quedar el marcador. En ese caso no vuelve a correr las pruebas, y tampoco las corre si encuentra la secuencia consumida con `analytics_identity` vacía. No se asume que la secuencia quedó restaurada sin verificarlo.
+
+1. **Diagnóstico, solo lectura.** Muestra la secuencia, las filas de Etapa 7, los restos de prueba, otras sesiones abiertas, transacciones preparadas y el contenido del marcador:
+   ```
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\supabase\tests\run_supabase_local.ps1 -SoloDiagnostico
+   ```
+2. **Solo si el diagnóstico muestra todo esto:**
+   - las seis tablas de Etapa 7 y `analytics_identity` con 0 filas;
+   - sin esquema `tests` ni datos ficticios;
+   - ninguna sesión con una transacción de pruebas activa;
+   - ninguna transacción preparada.
+
+   Entonces restaurar al valor `secuencia_previa=<last_value>|<is_called>` del marcador:
+   ```
+   docker exec supabase_db_mi-cava psql -X -h 127.0.0.1 -U postgres -d postgres -At -c "select setval('public.analytics_alias_seq', <last_value>, <is_called>)"
+   ```
+   Si no hay marcador y la base local nunca tuvo identidades analíticas, el valor inicial es `1` / `false`.
+3. **Verificar con una lectura.** Debe coincidir con el valor del marcador:
+   ```
+   docker exec supabase_db_mi-cava psql -X -h 127.0.0.1 -U postgres -d postgres -At -c "select last_value, is_called from public.analytics_alias_seq"
+   ```
+4. Recién entonces, borrar el marcador y volver a correr el runner.
+
+Si el diagnóstico muestra otra cosa (filas, esquema `tests`, sesiones activas), no restaurar: guardar la salida para analizarla.
+
+`-AceptarEstadoSecuencia` solo existe para el caso en que el diagnóstico confirme que una secuencia consumida con `analytics_identity` vacía es legítima.
+
+No usa `supabase db push`, `db reset`, `link` ni comandos remotos, y no contiene credenciales. Nunca usarlo con el `project_id` de otro proyecto ni contra Producción.
 
 ### Privilegios de tablas nuevas
 
