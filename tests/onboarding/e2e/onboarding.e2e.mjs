@@ -1,0 +1,633 @@
+// =============================================================================
+// E2E 7.2-B: la app real (build de Vite) en Chrome, contra PostgreSQL +
+// PostgREST LOCALES con RLS real (vía gateway.mjs). Lo lanza
+// supabase/tests/run_onboarding_e2e.sh. Nunca apuntar a Supabase real.
+// =============================================================================
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { organizarVariedades, VARIEDADES } from "../../../src/onboarding/catalogo.js";
+
+const { chromium } = await import(process.env.PLAYWRIGHT_CORE || "playwright-core");
+const APP = process.env.APP_URL;
+const GW = process.env.GW_URL;
+const REST = process.env.PGRST_URL;
+const SECRET = process.env.IT_JWT_SECRET;
+const CHROME = process.env.CHROME_BIN || "/usr/bin/google-chrome";
+const SHOTS = process.env.SHOTS_DIR || "/tmp/onboarding-shots";
+fs.mkdirSync(SHOTS, { recursive: true });
+
+const U = {
+  nuevo: "00000000-0000-0000-0000-000000000e01",
+  nuevo2: "00000000-0000-0000-0000-000000000e02",
+  nuevo3: "00000000-0000-0000-0000-000000000e03",
+  existente: "00000000-0000-0000-0000-000000000e10",
+  empezado: "00000000-0000-0000-0000-000000000e11",
+  existente2: "00000000-0000-0000-0000-000000000e12",
+  viewer: "00000000-0000-0000-0000-000000000e20",
+  completo: "00000000-0000-0000-0000-000000000e30",
+  errores: "00000000-0000-0000-0000-000000000e40",
+  mezcla: "00000000-0000-0000-0000-000000000e50",
+  celular: "00000000-0000-0000-0000-000000000e60",
+};
+
+const T = {
+  bienvenida: "Conozcamos un poco tus gustos",
+  sub: "Esto nos va a ayudar a recomendarte qué tomar",
+  tipos: "¿Qué tipos de vino te gustan?",
+  variedades: "¿Hay alguna variedad que te guste especialmente?",
+  conocimiento: "¿Cómo es tu relación con el vino?",
+  cierre: "Listo. Ya nos conocemos un poco mejor",
+  errorGuardar: "No pudimos guardar tus respuestas. Revisá tu conexión y probá de nuevo.",
+};
+
+function b64(o) {
+  return Buffer.from(JSON.stringify(o)).toString("base64url");
+}
+function jwt(payload) {
+  const h = b64({ alg: "HS256", typ: "JWT" });
+  const p = b64({ exp: Math.floor(Date.now() / 1000) + 3600, iat: Math.floor(Date.now() / 1000), ...payload });
+  const s = crypto.createHmac("sha256", SECRET).update(`${h}.${p}`).digest("base64url");
+  return `${h}.${p}.${s}`;
+}
+function sesion(uid) {
+  const exp = Math.floor(Date.now() / 1000) + 3600;
+  const user = { id: uid, aud: "authenticated", role: "authenticated", email: `${uid}@test.local`, app_metadata: {}, user_metadata: {} };
+  return {
+    access_token: jwt({ role: "authenticated", sub: uid, aud: "authenticated", email: user.email }),
+    token_type: "bearer",
+    expires_in: 3600,
+    expires_at: exp,
+    refresh_token: "refresh-de-prueba",
+    user,
+  };
+}
+
+async function fila(uid) {
+  const r = await fetch(`${REST}/user_preferences?user_id=eq.${uid}`, {
+    headers: { Authorization: `Bearer ${jwt({ role: "authenticated", sub: uid })}` },
+  });
+  assert.equal(r.status, 200);
+  const d = await r.json();
+  return d[0] || null;
+}
+
+let browser;
+before(async () => {
+  browser = await chromium.launch({ executablePath: CHROME, args: ["--no-sandbox"] });
+});
+after(async () => browser?.close());
+
+const ESCRITORIO = { viewport: { width: 1280, height: 860 } };
+const CELULAR = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
+
+async function abrir(uid, perfil = ESCRITORIO) {
+  const context = await browser.newContext({ ...perfil, locale: "es-AR" });
+  if (uid) {
+    const valor = JSON.stringify(sesion(uid));
+    await context.addInitScript((v) => window.localStorage.setItem("sb-127-auth-token", v), valor);
+  }
+  const page = await context.newPage();
+  const errores = [];
+  page.on("pageerror", (e) => errores.push(String(e)));
+  await page.goto(APP);
+  return { context, page, errores };
+}
+
+const paso = (page, n) => page.locator(`[data-onboarding-paso="${n}"]`);
+const tarjeta = (page, preg, id) => page.locator(`[data-pregunta="${preg}"] [data-id="${id}"]`);
+const presionada = async (loc) => (await loc.getAttribute("aria-pressed")) === "true";
+const idsVariedades = (page) =>
+  page.locator('[data-pregunta="variedades"] .onb-card').evaluateAll((els) => els.map((e) => e.dataset.id));
+const primaria = (page) => page.locator('[data-accion="primaria"]').first();
+const omitir = (page) => page.locator('[data-accion="omitir"]').first();
+const atras = (page) => page.locator('[data-accion="atras"]');
+const invitacion = (page) => page.locator("[data-invitacion-onboarding]");
+const biblioteca = (page, nombre) => page.getByText(`Entraste como`).filter({ hasText: nombre });
+
+async function foto(page, nombre) {
+  await page.waitForTimeout(350); // deja terminar las transiciones de color
+  await page.screenshot({ path: path.join(SHOTS, `${nombre}.png`), fullPage: true });
+}
+async function sinDesborde(page, etiqueta) {
+  const { sw, iw } = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth }));
+  assert.ok(sw <= iw, `${etiqueta}: desborde horizontal (${sw} > ${iw})`);
+}
+async function crearPerfil(page, nombre) {
+  await page.getByPlaceholder("Tu nombre").fill(nombre);
+  await page.getByRole("button", { name: "Continuar" }).click();
+}
+
+// -----------------------------------------------------------------------------
+test("A. regresión: sin sesión se ve «Mi Cava es personal»", async () => {
+  const { context, page, errores } = await abrir(null);
+  await page.getByText("Mi Cava es personal").waitFor();
+  assert.equal(await page.locator("[data-onboarding-paso]").count(), 0);
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+test("B. usuario nuevo (escritorio): recorrido completo, prioridad, Atrás, persistencia", async () => {
+  const { context, page, errores } = await abrir(U.nuevo);
+  await crearPerfil(page, "Nora Nueva");
+
+  // 1. Bienvenida (pantalla completa, sin biblioteca detrás)
+  await paso(page, 0).waitFor();
+  await page.getByRole("heading", { name: T.bienvenida }).waitFor();
+  await page.getByText(T.sub).waitFor();
+  assert.equal(await page.getByText("Entraste como").count(), 0);
+  assert.equal(await omitir(page).innerText(), "Ahora no, ir a mi cava");
+  await foto(page, "escritorio-1-bienvenida");
+  await primaria(page).click();
+
+  // 2. Tipos
+  await paso(page, 1).waitFor();
+  await page.getByRole("heading", { name: T.tipos }).waitFor();
+  assert.equal((await fila(U.nuevo)).onboarding_status, "started");
+  for (const t of ["Tinto", "Blanco", "Rosado", "Naranjo", "Espumoso"]) {
+    await page.locator('[data-pregunta="tipos"] .onb-card', { hasText: t }).first().waitFor();
+  }
+  await tarjeta(page, "tipos", "espumoso").click();
+  await tarjeta(page, "tipos", "probar_todo").click();
+  assert.ok(await presionada(tarjeta(page, "tipos", "espumoso")));
+  assert.ok(await presionada(tarjeta(page, "tipos", "probar_todo")));
+  await tarjeta(page, "tipos", "sin_preferencia").click();
+  assert.ok(await presionada(tarjeta(page, "tipos", "sin_preferencia")));
+  assert.ok(!(await presionada(tarjeta(page, "tipos", "espumoso"))), "«No tengo preferencia» desmarca tipos");
+  assert.ok(!(await presionada(tarjeta(page, "tipos", "probar_todo"))), "y «Me gusta probar de todo»");
+  await tarjeta(page, "tipos", "espumoso").click();
+  assert.ok(!(await presionada(tarjeta(page, "tipos", "sin_preferencia"))));
+  await foto(page, "escritorio-2-tipos");
+  await primaria(page).click();
+
+  // 3. Variedades: prioridad de Espumoso, 6 visibles
+  await paso(page, 2).waitFor();
+  let f = await fila(U.nuevo);
+  assert.deepEqual([f.wine_types_answer, f.preferred_wine_types, f.exploration_open, f.onboarding_step], ["answered", ["espumoso"], false, 2]);
+  const esperadas = organizarVariedades({ tipos: ["espumoso"] }).sugeridas.map((v) => v.id);
+  assert.deepEqual(await idsVariedades(page), esperadas);
+  assert.equal(esperadas.length, 6);
+  assert.ok(esperadas.includes("chardonnay") && esperadas.includes("pinot_noir"), "Espumoso prioriza Chardonnay y Pinot Noir");
+  await tarjeta(page, "variedades", "chardonnay").click();
+  await tarjeta(page, "variedades", "malbec").click();
+  assert.deepEqual(await idsVariedades(page), esperadas, "marcar no mueve las tarjetas");
+  await page.getByRole("button", { name: "Ver más variedades" }).click();
+  const todas = await idsVariedades(page);
+  assert.equal(todas.length, VARIEDADES.length, "ninguna excluida");
+  assert.deepEqual(todas.slice(0, 2), ["chardonnay", "malbec"], "elegidas agrupadas primero al ampliar");
+  await tarjeta(page, "variedades", "tannat").click();
+  await foto(page, "escritorio-3-variedades-ampliada");
+
+  // Atrás conserva; cambiar tipos no borra variedades
+  await atras(page).click();
+  await paso(page, 1).waitFor();
+  assert.ok(await presionada(tarjeta(page, "tipos", "espumoso")));
+  await tarjeta(page, "tipos", "tinto").click();
+  await primaria(page).click();
+  await paso(page, 2).waitFor();
+  const tras = await idsVariedades(page);
+  assert.deepEqual(tras.slice(0, 3), ["chardonnay", "malbec", "tannat"]);
+  for (const id of ["chardonnay", "malbec", "tannat"]) assert.ok(await presionada(tarjeta(page, "variedades", id)), id);
+  const seisTintoEsp = organizarVariedades({ tipos: ["tinto", "espumoso"] }).sugeridas.map((v) => v.id);
+  const elegidas = ["chardonnay", "malbec", "tannat"];
+  assert.deepEqual(tras, [...elegidas, ...seisTintoEsp.filter((id) => !elegidas.includes(id))], "seis + elegidas fuera de ellas");
+  await primaria(page).click();
+
+  // 4. Conocimiento
+  await paso(page, 3).waitFor();
+  f = await fila(U.nuevo);
+  assert.deepEqual(f.preferred_grapes, ["chardonnay", "malbec", "tannat"]);
+  assert.deepEqual(f.preferred_wine_types, ["tinto", "espumoso"]);
+  await page.getByText("Todavía estoy conociendo los distintos vinos").waitFor();
+  for (const t of ["Estoy empezando", "Me gusta el vino", "Conozco bastante"]) await page.getByText(t, { exact: true }).waitFor();
+  await tarjeta(page, "conocimiento", "beginner").click();
+  await foto(page, "escritorio-4-conocimiento");
+  await primaria(page).click();
+
+  // 5. Cierre
+  await paso(page, 4).waitFor();
+  await page.getByRole("heading", { name: T.cierre }).waitFor();
+  await page.getByText(/favoritos.*puntuaciones.*experiencias/).waitFor();
+  assert.equal(await omitir(page).count(), 0);
+  assert.equal(await atras(page).count(), 0);
+  f = await fila(U.nuevo);
+  assert.equal(f.onboarding_status, "completed");
+  assert.equal(f.knowledge_level, "beginner");
+  assert.equal(f.onboarding_resolved_at, f.updated_at, "fecha de la base");
+  await foto(page, "escritorio-5-cierre");
+  await page.getByRole("button", { name: "Ir a Mi Cava" }).click();
+  await biblioteca(page, "Nora Nueva").waitFor();
+  assert.equal(await invitacion(page).count(), 0);
+
+  // No se repite
+  await page.reload();
+  await biblioteca(page, "Nora Nueva").waitFor();
+  await page.waitForTimeout(800);
+  assert.equal(await page.locator("[data-onboarding-paso]").count(), 0);
+  assert.equal(await invitacion(page).count(), 0);
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+test("B2. usuario nuevo (celular): «Ahora no» desde la bienvenida entra directo y no se repite", async () => {
+  const { context, page, errores } = await abrir(U.nuevo2, CELULAR);
+  await crearPerfil(page, "Ñato Nuevo");
+  await paso(page, 0).waitFor();
+  await sinDesborde(page, "bienvenida celular");
+  await foto(page, "celular-1-bienvenida");
+  await omitir(page).click();
+  await biblioteca(page, "Ñato Nuevo").waitFor();
+  const f = await fila(U.nuevo2);
+  assert.equal(f.onboarding_status, "skipped");
+  assert.equal(f.onboarding_resolved_at, f.updated_at);
+  assert.equal(await invitacion(page).count(), 0);
+  await page.reload();
+  await biblioteca(page, "Ñato Nuevo").waitFor();
+  await page.waitForTimeout(800);
+  assert.equal(await page.locator("[data-onboarding-paso]").count(), 0);
+  assert.equal(await invitacion(page).count(), 0);
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+test("C. usuario existente (escritorio): invitación no bloqueante, omitir pregunta, reanudar, omitir recorrido", async () => {
+  const { context, page, errores } = await abrir(U.existente);
+  await biblioteca(page, "Ana Existente").waitFor();
+  await page.getByText("Gran Reserva de Prueba").first().waitFor();
+  await invitacion(page).waitFor();
+  assert.equal(await page.locator("[data-onboarding-paso]").count(), 0, "no reemplaza la biblioteca");
+  assert.equal(await invitacion(page).locator('[data-accion="primaria"]').innerText(), "Empezar");
+  await foto(page, "escritorio-6-invitacion");
+
+  // Regresión biblioteca: abrir una ficha sigue funcionando
+  await page.getByText("Gran Reserva de Prueba").first().click();
+  await page.getByText("Tomado").first().waitFor({ timeout: 5000 }).catch(() => {});
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await invitacion(page).waitFor();
+
+  await invitacion(page).locator('[data-accion="primaria"]').click();
+  await paso(page, 1).waitFor();
+  await primaria(page).click(); // continuar sin elegir = omitida
+  await paso(page, 2).waitFor();
+  let f = await fila(U.existente);
+  assert.deepEqual([f.onboarding_status, f.wine_types_answer, f.onboarding_step], ["started", "skipped", 2]);
+
+  await page.reload(); // reanudar
+  await biblioteca(page, "Ana Existente").waitFor();
+  await invitacion(page).waitFor();
+  assert.equal(await invitacion(page).locator('[data-accion="primaria"]').innerText(), "Continuar");
+  await invitacion(page).locator('[data-accion="primaria"]').click();
+  await paso(page, 2).waitFor();
+  await atras(page).click();
+  await paso(page, 1).waitFor();
+  for (const id of ["tinto", "blanco", "rosado", "naranjo", "espumoso", "probar_todo", "sin_preferencia"]) {
+    assert.ok(!(await presionada(tarjeta(page, "tipos", id))), id);
+  }
+  await omitir(page).click();
+  await biblioteca(page, "Ana Existente").waitFor();
+  assert.equal(await invitacion(page).count(), 0);
+  f = await fila(U.existente);
+  assert.deepEqual([f.onboarding_status, f.wine_types_answer], ["skipped", "skipped"]);
+  await page.reload();
+  await page.getByText("Gran Reserva de Prueba").first().waitFor();
+  await page.waitForTimeout(800);
+  assert.equal(await invitacion(page).count(), 0, "no se repite");
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+test("D. usuario existente con progreso (celular): reanuda, «No tengo preferencia» no borra variedades", async () => {
+  const { context, page, errores } = await abrir(U.empezado, CELULAR);
+  await biblioteca(page, "Beto Empezado").waitFor();
+  await invitacion(page).waitFor();
+  await sinDesborde(page, "invitación celular");
+  await foto(page, "celular-2-invitacion");
+  await invitacion(page).locator('[data-accion="primaria"]').click();
+  await paso(page, 2).waitFor();
+  assert.equal((await idsVariedades(page))[0], "glera");
+  assert.ok(await presionada(tarjeta(page, "variedades", "glera")));
+  await atras(page).click();
+  await paso(page, 1).waitFor();
+  assert.ok(await presionada(tarjeta(page, "tipos", "espumoso")));
+  await tarjeta(page, "tipos", "sin_preferencia").click();
+  await sinDesborde(page, "tipos celular");
+  await foto(page, "celular-3-tipos");
+  await primaria(page).click();
+  await paso(page, 2).waitFor();
+  assert.ok(await presionada(tarjeta(page, "variedades", "glera")), "la variedad sigue elegida");
+  assert.deepEqual(await idsVariedades(page), ["glera", ...organizarVariedades({ seleccionadas: ["glera"] }).sugeridas.map((v) => v.id)]);
+  await sinDesborde(page, "variedades celular");
+  await foto(page, "celular-4-variedades");
+  await primaria(page).click();
+  await paso(page, 3).waitFor();
+  await sinDesborde(page, "conocimiento celular");
+  await foto(page, "celular-5-conocimiento");
+  await primaria(page).click(); // sin elegir
+  await paso(page, 4).waitFor();
+  await sinDesborde(page, "cierre celular");
+  await foto(page, "celular-6-cierre");
+  const f = await fila(U.empezado);
+  assert.deepEqual(
+    [f.onboarding_status, f.wine_types_answer, f.preferred_wine_types, f.preferred_grapes, f.knowledge_level],
+    ["completed", "no_preference", [], ["glera"], null]
+  );
+  await page.getByRole("button", { name: "Ir a Mi Cava" }).click();
+  await biblioteca(page, "Beto Empezado").waitFor();
+  assert.equal(await invitacion(page).count(), 0);
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+test("E. viewer: sin onboarding, sin invitación, sin «Mis preferencias», sin consultas de preferencias", async () => {
+  const context = await browser.newContext({ ...ESCRITORIO });
+  await context.addInitScript((v) => window.localStorage.setItem("sb-127-auth-token", v), JSON.stringify(sesion(U.viewer)));
+  const page = await context.newPage();
+  const consultas = [];
+  page.on("request", (r) => r.url().includes("user_preferences") && consultas.push(r.url()));
+  await page.goto(APP);
+  await page.getByText("Todavía no tenés tu propia Cava").waitFor();
+  await page.waitForTimeout(1000);
+  assert.equal(await invitacion(page).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Mis preferencias" }).count(), 0);
+  assert.equal(await page.locator("[data-onboarding-paso]").count(), 0);
+  assert.deepEqual(consultas, []);
+  await context.close();
+});
+
+test("F. edición posterior en «Mis preferencias» sin alterar completed", async () => {
+  const { context, page, errores } = await abrir(U.completo);
+  await biblioteca(page, "Dani Completo").waitFor();
+  await page.waitForTimeout(600);
+  assert.equal(await invitacion(page).count(), 0);
+  await page.getByRole("button", { name: "Mis preferencias" }).click();
+  const modal = page.locator("[data-mis-preferencias]");
+  await modal.getByRole("heading", { name: "Mis preferencias" }).waitFor();
+  assert.ok(await presionada(tarjeta(page, "tipos", "tinto")));
+  assert.ok(await presionada(tarjeta(page, "variedades", "malbec")));
+  assert.ok(await presionada(tarjeta(page, "conocimiento", "intermediate")));
+
+  // Cancelar no escribe
+  const parches = [];
+  page.on("request", (r) => r.method() !== "GET" && r.url().includes("user_preferences") && parches.push(r.method()));
+  await modal.locator('[data-accion="cancelar"]').click();
+  await modal.waitFor({ state: "detached" });
+  assert.deepEqual(parches, []);
+
+  await page.getByRole("button", { name: "Mis preferencias" }).click();
+  await tarjeta(page, "tipos", "blanco").click();
+  await tarjeta(page, "variedades", "torrontes").click();
+  await tarjeta(page, "conocimiento", "advanced").click();
+  await foto(page, "escritorio-7-mis-preferencias");
+  await page.locator('[data-mis-preferencias] [data-accion="guardar"]').click();
+  await page.locator("[data-mis-preferencias]").waitFor({ state: "detached" });
+  const f = await fila(U.completo);
+  assert.deepEqual(f.preferred_wine_types, ["tinto", "blanco"]);
+  assert.deepEqual(f.preferred_grapes, ["malbec", "torrontes"]);
+  assert.equal(f.knowledge_level, "advanced");
+  assert.equal(f.onboarding_status, "completed");
+  assert.equal(new Date(f.onboarding_resolved_at).toISOString(), "2026-11-01T12:00:00.000Z", "fecha de cierre intacta");
+  assert.equal(f.onboarding_step, 4);
+  assert.equal(await invitacion(page).count(), 0);
+  assert.deepEqual(errores, []);
+  await context.close();
+
+  // Celular: el modal ocupa la pantalla sin desborde
+  const m = await abrir(U.completo, CELULAR);
+  await biblioteca(m.page, "Dani Completo").waitFor();
+  await m.page.getByRole("button", { name: "Mis preferencias" }).click();
+  await m.page.locator("[data-mis-preferencias] h2").waitFor();
+  await sinDesborde(m.page, "Mis preferencias celular");
+  await m.page.waitForTimeout(350);
+  await m.page.screenshot({ path: path.join(SHOTS, "celular-7-mis-preferencias.png") });
+  await m.context.close();
+});
+
+test("G1. error de lectura: la biblioteca carga, sin invitación; «Mis preferencias» permite reintentar", async () => {
+  const { context, page, errores } = await abrir(null);
+  await context.addInitScript((v) => window.localStorage.setItem("sb-127-auth-token", v), JSON.stringify(sesion(U.errores)));
+  await page.route("**/rest/v1/user_preferences**", (r) => r.abort("internetdisconnected"));
+  await page.goto(APP);
+  await biblioteca(page, "Eli Errores").waitFor();
+  await page.waitForTimeout(800);
+  assert.equal(await invitacion(page).count(), 0);
+  assert.equal(await page.locator("[data-onboarding-paso]").count(), 0);
+  await page.getByRole("button", { name: "Mis preferencias" }).click();
+  await page.getByText("No pudimos cargar tus preferencias.").waitFor();
+  assert.ok(await page.locator('[data-mis-preferencias] [data-accion="guardar"]').isDisabled(), "no se puede guardar sin leer");
+  await page.unroute("**/rest/v1/user_preferences**");
+  await page.getByRole("button", { name: "Reintentar" }).click();
+  await page.locator('[data-mis-preferencias] [data-pregunta="tipos"]').waitFor();
+  assert.equal(await fila(U.errores), null, "no se escribió nada");
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+test("G2. error de escritura: no avanza, conserva la selección, «Ahora no» no bloquea y la invitación vuelve después", async () => {
+  const { context, page, errores } = await abrir(U.existente2);
+  await biblioteca(page, "Caro Existente").waitFor();
+  await invitacion(page).waitFor();
+  await invitacion(page).locator('[data-accion="primaria"]').click();
+  await paso(page, 1).waitFor();
+  await page.waitForTimeout(500); // deja terminar el registro de inicio
+  await tarjeta(page, "tipos", "tinto").click();
+  await page.route("**/rest/v1/user_preferences**", (r) => (r.request().method() === "GET" ? r.continue() : r.abort("internetdisconnected")));
+  await primaria(page).click();
+  await page.getByRole("alert").filter({ hasText: T.errorGuardar }).waitFor();
+  assert.equal(await paso(page, 1).count(), 1, "no avanzó");
+  assert.ok(await presionada(tarjeta(page, "tipos", "tinto")), "selección conservada");
+  await foto(page, "escritorio-8-error-guardar");
+  await omitir(page).click();
+  await biblioteca(page, "Caro Existente").waitFor();
+  assert.equal(await invitacion(page).count(), 0, "no insiste en la sesión");
+  const f = await fila(U.existente2);
+  assert.notEqual(f?.onboarding_status, "skipped", "el «Ahora no» fallido no se dio por guardado");
+  assert.equal(f?.wine_types_answer ?? null, null);
+  await page.unroute("**/rest/v1/user_preferences**");
+  await page.reload();
+  await invitacion(page).waitFor();
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+test("G3. lectura colgada tras crear el perfil: espera acotada y entra a la cava", async () => {
+  const { context, page, errores } = await abrir(U.nuevo3);
+  await page.route("**/rest/v1/user_preferences**", () => {}); // nunca responde
+  await crearPerfil(page, "Olga Nueva");
+  const t0 = Date.now();
+  await biblioteca(page, "Olga Nueva").waitFor({ timeout: 20000 });
+  const espera = Date.now() - t0;
+  assert.ok(espera < 15000, `esperó ${espera} ms`);
+  assert.equal(await page.locator("[data-onboarding-paso]").count(), 0);
+  assert.equal(await fila(U.nuevo3), null, "no se escribió nada");
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+// -----------------------------------------------------------------------------
+// Verificación de integración (punto 1): seis sugerencias + elegidas fuera de
+// ellas, sin duplicados ni pérdidas, en el onboarding y en «Mis preferencias».
+// -----------------------------------------------------------------------------
+test("H. variedades: seis sugerencias + elegidas que no están entre ellas, sin duplicados", async () => {
+  const { context, page, errores } = await abrir(U.mezcla);
+  await invitacion(page).waitFor();
+  await invitacion(page).locator('[data-accion="primaria"]').click();
+  await paso(page, 2).waitFor();
+  const seis = organizarVariedades({ tipos: ["tinto"] }).sugeridas.map((v) => v.id);
+  assert.ok(seis.includes("malbec") && !seis.includes("glera"), "precondición: malbec dentro, glera fuera");
+  const ids = await idsVariedades(page);
+  assert.deepEqual(ids, ["malbec", "glera", ...seis.filter((id) => id !== "malbec")]);
+  assert.equal(ids.length, 7, "6 sugerencias + 1 elegida fuera de ellas");
+  assert.equal(new Set(ids).size, ids.length, "sin duplicados");
+  assert.ok(await presionada(tarjeta(page, "variedades", "malbec")));
+  assert.ok(await presionada(tarjeta(page, "variedades", "glera")));
+  // Marcar una de las seis no agrega tarjetas
+  await tarjeta(page, "variedades", seis[2]).click();
+  assert.equal((await idsVariedades(page)).length, 7);
+  await page.getByRole("button", { name: "Ver más variedades" }).click();
+  const todas = await idsVariedades(page);
+  assert.equal(todas.length, VARIEDADES.length);
+  assert.equal(new Set(todas).size, todas.length);
+  assert.deepEqual(todas.slice(0, 3), ["malbec", "glera", seis[2]], "elegidas agrupadas al ampliar");
+  await primaria(page).click();
+  await paso(page, 3).waitFor();
+  assert.deepEqual((await fila(U.mezcla)).preferred_grapes, ["malbec", "glera", seis[2]], "sin pérdidas");
+  await omitir(page).click();
+  await biblioteca(page, "Fede Mezcla").waitFor();
+  // Mismo criterio en «Mis preferencias»
+  await page.getByRole("button", { name: "Mis preferencias" }).click();
+  await page.locator('[data-mis-preferencias] [data-pregunta="variedades"]').waitFor();
+  const enModal = await idsVariedades(page);
+  const seisSinMalbec = seis.filter((id) => !["malbec", seis[2]].includes(id));
+  assert.deepEqual(enModal, ["malbec", "glera", seis[2], ...seisSinMalbec]);
+  assert.equal(new Set(enModal).size, enModal.length);
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+// -----------------------------------------------------------------------------
+// Verificación de integración (punto 2): «Mis preferencias» en celular.
+// Desplazamiento con gesto táctil real (CDP), selección por toque y acceso
+// permanente a Cancelar y Guardar, en tres tamaños de pantalla.
+// -----------------------------------------------------------------------------
+async function botonVisibleYTocable(page, accion) {
+  return page.evaluate((acc) => {
+    const b = document.querySelector(`[data-mis-preferencias] [data-accion="${acc}"]`);
+    if (!b) return { ok: false, motivo: "no existe" };
+    const r = b.getBoundingClientRect();
+    const dentro = r.top >= 0 && r.left >= 0 && r.bottom <= window.innerHeight && r.right <= window.innerWidth && r.height > 0;
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const arriba = document.elementFromPoint(cx, cy);
+    const tocable = Boolean(arriba && (arriba === b || b.contains(arriba)));
+    return { ok: dentro && tocable, dentro, tocable, rect: [r.top, r.bottom, window.innerHeight] };
+  }, accion);
+}
+// Arrastre con el dedo: eventos táctiles de bajo nivel (touchStart / touchMove
+// / touchEnd) que el navegador procesa como un gesto real. (El gesto
+// sintético Input.synthesizeScrollGesture no desplaza nada en este Chrome
+// sin pantalla, ni siquiera la página: no sirve para esta verificación.)
+async function deslizar(page, cdp, yDistance) {
+  const box = await page.locator(".onb-modal-cuerpo").boundingBox();
+  const x = Math.round(box.x + box.width / 2);
+  const recorrido = Math.min(Math.abs(yDistance), Math.round(box.height * 0.7));
+  const y0 = yDistance < 0 ? Math.round(box.y + box.height * 0.85) : Math.round(box.y + box.height * 0.15);
+  const y1 = yDistance < 0 ? y0 - recorrido : y0 + recorrido;
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: y0 }] });
+  for (let k = 1; k <= 12; k++) {
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y0 + ((y1 - y0) * k) / 12 }] });
+    await page.waitForTimeout(16);
+  }
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await page.waitForTimeout(400);
+}
+const scrollCuerpo = (page) => page.locator(".onb-modal-cuerpo").evaluate((el) => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight }));
+
+test("I. «Mis preferencias» en celular: desplazamiento táctil, selección y Cancelar/Guardar siempre accesibles", async () => {
+  const pantallas = [
+    { nombre: "390x844", viewport: { width: 390, height: 844 } },
+    { nombre: "360x640", viewport: { width: 360, height: 640 } },
+    { nombre: "844x390-horizontal", viewport: { width: 844, height: 390 } },
+  ];
+  for (const [i, pant] of pantallas.entries()) {
+    const ultimo = i === pantallas.length - 1;
+    const { context, page, errores } = await abrir(U.celular, { ...CELULAR, viewport: pant.viewport });
+    const cdp = await context.newCDPSession(page);
+    const escrituras = [];
+    page.on("request", (r) => r.url().includes("user_preferences") && r.method() !== "GET" && escrituras.push(r.method()));
+    await biblioteca(page, "Gabi Celular").waitFor();
+    await page.getByRole("button", { name: "Mis preferencias" }).tap();
+    await page.locator('[data-mis-preferencias] [data-pregunta="tipos"]').waitFor();
+    await sinDesborde(page, `modal ${pant.nombre}`);
+    const fondoAntes = await page.evaluate(() => document.scrollingElement.scrollTop);
+
+    for (const acc of ["cancelar", "guardar"]) {
+      const r = await botonVisibleYTocable(page, acc);
+      assert.ok(r.ok, `${pant.nombre}: ${acc} al abrir ${JSON.stringify(r)}`);
+    }
+    let s = await scrollCuerpo(page);
+    assert.ok(s.max > 0, `${pant.nombre}: el contenido es desplazable`);
+    assert.equal(s.top, 0);
+
+    const marcadasAntes = await page.locator('[data-mis-preferencias] [aria-pressed="true"]').count();
+    // Gesto táctil hasta el final
+    for (let k = 0; k < 12 && s.top < s.max - 1; k++) {
+      await deslizar(page, cdp, -Math.round(pant.viewport.height * 0.6));
+      s = await scrollCuerpo(page);
+    }
+    assert.ok(s.top >= s.max - 1, `${pant.nombre}: llega al final con el gesto (${s.top}/${s.max})`);
+    for (const acc of ["cancelar", "guardar"]) {
+      const r = await botonVisibleYTocable(page, acc);
+      assert.ok(r.ok, `${pant.nombre}: ${acc} tras desplazar ${JSON.stringify(r)}`);
+    }
+    assert.equal(await page.locator('[data-mis-preferencias] [aria-pressed="true"]').count(), marcadasAntes,
+      `${pant.nombre}: arrastrar no marca ni desmarca tarjetas`);
+    const fondoDespues = await page.evaluate(() => document.scrollingElement.scrollTop);
+    assert.equal(fondoDespues, fondoAntes, `${pant.nombre}: la página de fondo no se desplaza`);
+
+    // Selección por toque al final (conocimiento)
+    await tarjeta(page, "conocimiento", "advanced").tap();
+    assert.ok(await presionada(tarjeta(page, "conocimiento", "advanced")));
+    assert.ok(!(await presionada(tarjeta(page, "conocimiento", "beginner"))));
+
+    // Volver arriba con el gesto y tocar un tipo
+    for (let k = 0; k < 12 && s.top > 0; k++) {
+      await deslizar(page, cdp, Math.round(pant.viewport.height * 0.6));
+      s = await scrollCuerpo(page);
+    }
+    assert.equal(s.top, 0, `${pant.nombre}: vuelve arriba con el gesto`);
+    await tarjeta(page, "tipos", "rosado").tap();
+    assert.ok(await presionada(tarjeta(page, "tipos", "rosado")));
+    // Ampliar variedades y elegir la última
+    await page.getByRole("button", { name: "Ver más variedades" }).tap();
+    const ids = await idsVariedades(page);
+    assert.equal(new Set(ids).size, ids.length);
+    await tarjeta(page, "variedades", ids[ids.length - 1]).tap();
+    assert.ok(await presionada(tarjeta(page, "variedades", ids[ids.length - 1])));
+    for (const acc of ["cancelar", "guardar"]) {
+      const r = await botonVisibleYTocable(page, acc);
+      assert.ok(r.ok, `${pant.nombre}: ${acc} tras ampliar ${JSON.stringify(r)}`);
+    }
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: path.join(SHOTS, `celular-mis-preferencias-${pant.nombre}.png`) });
+
+    if (!ultimo) {
+      await page.locator('[data-mis-preferencias] [data-accion="cancelar"]').tap();
+      await page.locator("[data-mis-preferencias]").waitFor({ state: "detached" });
+      assert.deepEqual(escrituras, [], `${pant.nombre}: Cancelar no escribe`);
+    } else {
+      await page.locator('[data-mis-preferencias] [data-accion="guardar"]').tap();
+      await page.locator("[data-mis-preferencias]").waitFor({ state: "detached" });
+      const f = await fila(U.celular);
+      assert.deepEqual(f.preferred_wine_types, ["blanco", "rosado"]);
+      assert.equal(f.knowledge_level, "advanced");
+      assert.ok(f.preferred_grapes.includes(ids[ids.length - 1]));
+      assert.ok(f.preferred_grapes.includes("torrontes") && f.preferred_grapes.includes("glera"), "selecciones previas conservadas");
+      assert.equal(f.onboarding_status, "completed");
+    }
+    assert.deepEqual(errores, []);
+    await context.close();
+  }
+});
