@@ -366,6 +366,27 @@ select tests.eq('compat', 'fila de E eliminada por cascada', 'postgres', null,
 
 
 -- -----------------------------------------------------------------------------
+-- 10. FECHA DE CIERRE DETERMINADA POR LA BASE
+-- -----------------------------------------------------------------------------
+-- La capa envía el texto 'now' (como lo haría PostgREST desde JSON): la base
+-- lo convierte en la hora de la transacción, igual a updated_at (trigger 7.1).
+select tests.ok('fecha', 'G se crea y omite enviando ''now'' como texto JSON', 'postgres', null,
+  $$insert into auth.users (id) values ('00000000-0000-0000-0000-000000000009');
+    insert into public.profiles (id, nombre) values ('00000000-0000-0000-0000-000000000009', 'Usuario G')$$);
+select tests.ok('fecha', 'G: update con resolved_at = ''now'' (texto)', 'authenticated', tests.uid('9'),
+  $$insert into public.user_preferences (user_id) values ('00000000-0000-0000-0000-000000000009');
+    select pg_sleep(0.2);
+    update public.user_preferences p set onboarding_status = 'skipped',
+      onboarding_resolved_at = (x.j ->> 'onboarding_resolved_at')::timestamptz
+    from (select '{"onboarding_resolved_at":"now"}'::json as j) x
+    where p.user_id = '00000000-0000-0000-0000-000000000009'$$);
+select tests.eq('fecha', 'resolved_at = updated_at (hora de la transacción en la base)', 'postgres', null,
+  $$select count(*) from public.user_preferences
+     where user_id = '00000000-0000-0000-0000-000000000009'
+       and onboarding_resolved_at = updated_at and onboarding_resolved_at > now() - interval '1 hour'$$, 1);
+
+
+-- -----------------------------------------------------------------------------
 -- RESUMEN
 -- -----------------------------------------------------------------------------
 \echo

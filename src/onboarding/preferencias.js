@@ -50,6 +50,10 @@ export const ESTADOS = Object.freeze({
 
 const ESTADOS_EN_CURSO = [ESTADOS.NEVER, ESTADOS.STARTED];
 
+// Valor que se envía en onboarding_resolved_at para que la hora la
+// determine PostgreSQL (ver resolver()).
+export const FECHA_DEL_SERVIDOR = "now";
+
 // Valores de user_preferences.wine_types_answer (migración 20261110000000).
 // null = pregunta todavía no respondida.
 export const RESPUESTA_TIPOS = Object.freeze({
@@ -329,7 +333,11 @@ async function resolver(client, userId, estado, cambios, paso) {
   const columnas = {
     ...conv.columnas,
     onboarding_status: estado,
-    onboarding_resolved_at: new Date().toISOString(),
+    // La fecha la fija la base, no el reloj del dispositivo: 'now' es un
+    // valor especial de entrada de timestamptz que PostgreSQL convierte al
+    // procesar la sentencia en la hora de inicio de la transacción (la
+    // misma que pone el trigger de 7.1 en updated_at).
+    onboarding_resolved_at: FECHA_DEL_SERVIDOR,
   };
   if (paso !== undefined) columnas.onboarding_step = paso;
 

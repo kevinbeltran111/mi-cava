@@ -88,3 +88,54 @@ test("validación local: no hay llamada a la red si los datos son inválidos o f
   assert.equal(llamadas, 0);
   assert.ok(RESPUESTA_TIPOS.SIN_PREFERENCIA !== RESPUESTA_TIPOS.OMITIDA);
 });
+
+// Cliente falso que registra lo que se enviaría a PostgREST.
+function clienteEspia() {
+  const enviados = [];
+  const filaBase = {
+    user_id: "u", onboarding_status: "never", onboarding_step: null, onboarding_resolved_at: null,
+    wine_types_answer: null, preferred_wine_types: [], exploration_open: false,
+    preferred_grapes: [], knowledge_level: null, updated_at: "2026-11-10T00:00:00Z",
+  };
+  const builder = (op, payload) => {
+    const q = {
+      eq() { return q; }, in() { return q; },
+      select() {
+        return Promise.resolve({ data: [{ ...filaBase, ...payload, onboarding_resolved_at: "2026-11-10T00:00:00Z" }], error: null });
+      },
+      then(res) { return Promise.resolve({ error: null }).then(res); },
+    };
+    enviados.push({ op, payload });
+    return q;
+  };
+  return {
+    enviados,
+    client: { from: () => ({ upsert: (p) => builder("upsert", p), update: (p) => builder("update", p) }) },
+  };
+}
+
+test("completar y omitir no envían la hora del dispositivo: envían 'now' (hora de la base)", async () => {
+  for (const op of ["completar", "omitir"]) {
+    const { client, enviados } = clienteEspia();
+    const { completarOnboarding, omitirOnboarding, FECHA_DEL_SERVIDOR } = await import("../../src/onboarding/preferencias.js");
+    const r = op === "completar" ? await completarOnboarding(client, "u") : await omitirOnboarding(client, "u");
+    assert.equal(r.ok, true);
+    const upd = enviados.find((e) => e.op === "update");
+    assert.equal(FECHA_DEL_SERVIDOR, "now");
+    assert.equal(upd.payload.onboarding_resolved_at, "now", op);
+    assert.equal(JSON.stringify(enviados).match(/\d{4}-\d{2}-\d{2}T/), null, "sin fechas ISO del cliente");
+  }
+});
+
+test("editar y guardar progreso nunca envían estado ni fecha de cierre", async () => {
+  const { guardarProgreso: gp, editarPreferencias: ep } = await import("../../src/onboarding/preferencias.js");
+  for (const fn of [(c) => gp(c, "u", { cambios: { nivel: "beginner" }, paso: 3 }), (c) => ep(c, "u", { nivel: "beginner" })]) {
+    const { client, enviados } = clienteEspia();
+    assert.equal((await fn(client)).ok, true);
+    const upd = enviados.find((e) => e.op === "update");
+    assert.equal("onboarding_resolved_at" in upd.payload, false);
+  }
+  const { client, enviados } = clienteEspia();
+  await ep(client, "u", { nivel: "beginner" });
+  assert.equal("onboarding_status" in enviados.find((e) => e.op === "update").payload, false);
+});

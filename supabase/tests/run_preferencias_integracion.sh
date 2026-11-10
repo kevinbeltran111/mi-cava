@@ -45,13 +45,20 @@ do $$ begin
   end if;
 end $$;
 grant anon, authenticated, service_role to authenticator;
--- Usuarios de prueba: X, Y (editor) y L (fila «legada» de 7.1, sin respuesta).
+-- Usuarios de prueba: X, Y, W, V, N, P (sin fila), I (viewer invitado, sin fila)
+-- y L (fila «legada» de 7.1, sin respuesta).
 insert into auth.users (id) values
   ('00000000-0000-0000-0000-0000000000a1'), ('00000000-0000-0000-0000-0000000000b1'),
-  ('00000000-0000-0000-0000-0000000000c1'), ('00000000-0000-0000-0000-0000000000e1');
+  ('00000000-0000-0000-0000-0000000000c1'), ('00000000-0000-0000-0000-0000000000e1'),
+  ('00000000-0000-0000-0000-0000000000f1'), ('00000000-0000-0000-0000-0000000000f2'),
+  ('00000000-0000-0000-0000-0000000000f3'), ('00000000-0000-0000-0000-0000000000f4');
 insert into public.profiles (id, nombre) values
   ('00000000-0000-0000-0000-0000000000a1', 'X'), ('00000000-0000-0000-0000-0000000000b1', 'Y'),
-  ('00000000-0000-0000-0000-0000000000c1', 'L'), ('00000000-0000-0000-0000-0000000000e1', 'W');
+  ('00000000-0000-0000-0000-0000000000c1', 'L'), ('00000000-0000-0000-0000-0000000000e1', 'W'),
+  ('00000000-0000-0000-0000-0000000000f1', 'V'), ('00000000-0000-0000-0000-0000000000f2', 'N'),
+  ('00000000-0000-0000-0000-0000000000f3', 'P');
+-- I: invitado por /api/invite-approved-user (perfil viewer creado con service_role).
+insert into public.profiles (id, nombre, role) values ('00000000-0000-0000-0000-0000000000f4', 'I', 'viewer');
 insert into public.user_preferences (user_id, preferred_wine_types, exploration_open, knowledge_level,
                                      onboarding_status, onboarding_step)
 values ('00000000-0000-0000-0000-0000000000c1', '{tinto,rosado}', false, 'intermediate', 'started', 2);

@@ -211,6 +211,8 @@ test("7a. completar y editar sin alterar completed", { skip }, async () => {
   assert.equal(c.preferencias.estado, ESTADOS.COMPLETED);
   assert.equal(c.preferencias.paso, PASOS.CIERRE);
   assert.ok(c.preferencias.resueltoEn);
+  assert.equal(c.preferencias.resueltoEn, c.preferencias.actualizadoEn,
+    "resolved_at = hora de la transacción en la base (igual a updated_at del trigger de 7.1)");
   assert.equal(c.preferencias.nivel, "intermediate");
   const resuelto = c.preferencias.resueltoEn;
 
@@ -253,6 +255,7 @@ test("7b. omitir conserva respuestas parciales; editar no altera skipped", { ski
   assert.equal(o.preferencias.estado, ESTADOS.SKIPPED);
   assert.equal(o.preferencias.respuestaTipos, "skipped", "respuesta previa conservada");
   assert.equal(o.preferencias.paso, PASOS.VARIEDADES, "paso conservado");
+  assert.equal(o.preferencias.resueltoEn, o.preferencias.actualizadoEn, "fecha fijada por la base");
   const resuelto = o.preferencias.resueltoEn;
   const e = await editarPreferencias(clienteDe(Y), Y, { nivel: "advanced" });
   assert.equal(e.ok, true);
@@ -275,6 +278,7 @@ test("«Ahora no» desde la bienvenida, sin registro previo", { skip }, async ()
   assert.equal(r.ok, true, JSON.stringify(r.error));
   assert.equal(r.preferencias.estado, ESTADOS.SKIPPED);
   assert.ok(r.preferencias.resueltoEn);
+  assert.equal(r.preferencias.resueltoEn, r.preferencias.actualizadoEn, "fecha fijada por la base");
   assert.equal(r.preferencias.respuestaTipos, null);
   assert.equal(debeMostrarOnboarding(await leer(W)), false);
 });
@@ -332,4 +336,102 @@ test("variedad fuera del catálogo: rechazada antes de escribir", { skip }, asyn
   assert.equal(r.ok, false);
   assert.equal(r.error.tipo, "validacion");
   assert.deepEqual((await leer(X)).preferencias.variedades, ["torrontes"]);
+});
+
+// -----------------------------------------------------------------------------
+// Fecha de cierre determinada por la base aunque el reloj del dispositivo
+// esté desfasado (el cliente nunca envía una fecha propia).
+// -----------------------------------------------------------------------------
+test("reloj del dispositivo desfasado: la fecha de cierre la fija la base", { skip }, async () => {
+  const V = "00000000-0000-0000-0000-0000000000f1"; // tiene perfil, sin fila
+  const cuerpos = [];
+  const espia = async (input, init = {}) => {
+    if (init.body) cuerpos.push(String(init.body));
+    return fetch(input, init);
+  };
+  const cliente = clienteDe(V, espia); // token firmado con la hora real
+  const RealDate = globalThis.Date;
+  const desfase = -5 * 365 * 24 * 3600 * 1000; // dispositivo 5 años atrás
+  class DateFalso extends RealDate {
+    constructor(...a) { super(...(a.length ? a : [RealDate.now() + desfase])); }
+    static now() { return RealDate.now() + desfase; }
+  }
+  globalThis.Date = DateFalso;
+  let r;
+  try {
+    r = await completarOnboarding(cliente, V);
+  } finally {
+    globalThis.Date = RealDate;
+  }
+  assert.equal(r.ok, true, JSON.stringify(r.error));
+  assert.ok(cuerpos.some((b) => b.includes('"onboarding_resolved_at":"now"')), "se envió 'now'");
+  const anio = new RealDate(r.preferencias.resueltoEn).getUTCFullYear();
+  assert.ok(Math.abs(new RealDate(r.preferencias.resueltoEn) - RealDate.now()) < 60_000,
+    `la fecha guardada es la del servidor (año ${anio}), no la del dispositivo`);
+  assert.equal(r.preferencias.resueltoEn, r.preferencias.actualizadoEn);
+});
+
+// -----------------------------------------------------------------------------
+// Punto 2: registro vacío en never — sin ofrecimientos repetidos tras resolver
+// -----------------------------------------------------------------------------
+test("registro never creado por una escritura interrumpida equivale a sin registro", { skip }, async () => {
+  const N = "00000000-0000-0000-0000-0000000000f2"; // tiene perfil, sin fila
+  // El alta (POST) llega; el UPDATE (PATCH) se corta en la red.
+  const cortaPatch = async (input, init = {}) => {
+    if ((init.method || "GET").toUpperCase() === "PATCH") throw new TypeError("fetch failed");
+    return fetch(input, init);
+  };
+  const r = await omitirOnboarding(clienteDe(N, cortaPatch), N);
+  assert.equal(r.ok, false, "no se confirma el «Ahora no» fallido");
+  const l = await leer(N);
+  assert.equal(l.carga, CARGA.CON_REGISTRO);
+  assert.equal(l.preferencias.estado, ESTADOS.NEVER);
+  assert.equal(l.preferencias.resueltoEn, null);
+  assert.equal(debeMostrarOnboarding(l), true, "se vuelve a ofrecer: el usuario no lo resolvió");
+  assert.equal(pasoParaReanudar(l.preferencias), PASOS.BIENVENIDA);
+  // Al reintentar, se resuelve sobre la misma fila (no se duplica nada)
+  const r2 = await omitirOnboarding(clienteDe(N), N);
+  assert.equal(r2.ok, true);
+  assert.equal(r2.sinCambios, undefined);
+  assert.equal(r2.preferencias.estado, ESTADOS.SKIPPED);
+  const fecha = r2.preferencias.resueltoEn;
+  // Ya resuelto: ninguna operación posterior lo vuelve a ofrecer ni cambia la fecha
+  for (const op of [
+    () => omitirOnboarding(clienteDe(N), N),
+    () => completarOnboarding(clienteDe(N), N),
+    () => iniciarOnboarding(clienteDe(N), N),
+    () => editarPreferencias(clienteDe(N), N, { variedades: ["malbec"] }),
+  ]) {
+    const x = await op();
+    assert.equal(x.ok, true, JSON.stringify(x.error));
+    const ll = await leer(N);
+    assert.equal(ll.preferencias.estado, ESTADOS.SKIPPED);
+    assert.equal(ll.preferencias.resueltoEn, fecha);
+    assert.equal(debeMostrarOnboarding(ll), false);
+  }
+  const { count } = await clienteDe(N).from("user_preferences").select("*", { count: "exact", head: true });
+  assert.equal(count, 1, "una sola fila por usuario");
+});
+
+test("edición antes del onboarding: crea never, conserva las respuestas y no lo resuelve", { skip }, async () => {
+  const P = "00000000-0000-0000-0000-0000000000f3"; // tiene perfil, sin fila
+  const e = await editarPreferencias(clienteDe(P), P, { variedades: ["syrah"] });
+  assert.equal(e.ok, true, JSON.stringify(e.error));
+  assert.equal(e.preferencias.estado, ESTADOS.NEVER);
+  assert.equal(debeMostrarOnboarding(await leer(P)), true);
+  const i = await iniciarOnboarding(clienteDe(P), P);
+  assert.equal(i.ok, true);
+  assert.equal(i.preferencias.estado, ESTADOS.STARTED);
+  assert.deepEqual(i.preferencias.variedades, ["syrah"], "la respuesta editada se conserva");
+  const c = await completarOnboarding(clienteDe(P), P);
+  assert.equal(c.ok, true);
+  assert.equal(debeMostrarOnboarding(await leer(P)), false);
+});
+
+test("usuario invitado (perfil viewer creado por el servidor) gestiona su propia fila", { skip }, async () => {
+  const I = "00000000-0000-0000-0000-0000000000f4"; // perfil role = viewer, sin fila
+  assert.equal((await leer(I)).carga, CARGA.SIN_REGISTRO);
+  const o = await omitirOnboarding(clienteDe(I), I);
+  assert.equal(o.ok, true, JSON.stringify(o.error));
+  assert.equal(debeMostrarOnboarding(await leer(I)), false);
 });
