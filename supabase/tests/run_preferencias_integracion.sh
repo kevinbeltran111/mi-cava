@@ -76,6 +76,7 @@ cleanup() {
   "${PSQL[@]}" -d postgres -c "drop database if exists \"$DB\" with (force);" >/dev/null || true
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM  # Ctrl+C o kill también limpian
 
 for _ in $(seq 1 50); do
   curl -fs "http://127.0.0.1:$PORT/" >/dev/null 2>&1 && break

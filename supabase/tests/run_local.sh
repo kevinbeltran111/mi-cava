@@ -139,3 +139,29 @@ else
   echo "FALLA: la migración 7.2-A alteró filas existentes o no validó (nulls=$nulls, validado=$valid)" >&2; exit 1
 fi
 "${PSQL[@]}" -d postgres -c "drop database if exists \"$DBC\" with (force);"
+
+echo "== Reversión de 7.2-A (supabase/reversion/revertir_20261110000000.sql)"
+REV="$ROOT/supabase/reversion/revertir_20261110000000.sql"
+# a) En la base principal hay respuestas: sin la decisión explícita debe abortar sin cambios
+if "${PSQL[@]}" -d "$DB" -f "$REV" 2>/tmp/etapa72_rev.err; then
+  echo "FALLA: la reversión borró respuestas sin la decisión explícita" >&2; exit 1
+fi
+grep -q "fila(s) tienen respuesta" /tmp/etapa72_rev.err \
+  && "${PSQL[@]}" -d "$DB" -Atc "select count(*) from information_schema.columns where table_name='user_preferences' and column_name='wine_types_answer'" | grep -qx 1 \
+  && echo "   OK: con respuestas guardadas aborta y no cambia nada" \
+  || { echo "FALLA: abortó por otro motivo o cambió algo:" >&2; cat /tmp/etapa72_rev.err >&2; exit 1; }
+# b) Con la decisión explícita revierte y deja los objetos de 7.1 exactamente como antes de 7.2-A
+filas_antes="$("${PSQL[@]}" -d "$DB" -At -c "select count(*) from public.user_preferences")"
+"${PSQL[@]}" -d "$DB" -c "set micava.revertir_con_datos = 'si';" -f "$REV" >/dev/null 2>&1 \
+  || { echo "FALLA: la reversión con decisión explícita no se aplicó" >&2; exit 1; }
+"${PSQL[@]}" -d "$DB" -At -f "$HERE/etapa7_fingerprint.sql" > /tmp/etapa72_e7fp_revertido.txt
+filas_despues="$("${PSQL[@]}" -d "$DB" -At -c "select count(*) from public.user_preferences")"
+if diff -q /tmp/etapa72_e7fp_before.txt /tmp/etapa72_e7fp_revertido.txt >/dev/null && [[ "$filas_antes" == "$filas_despues" ]]; then
+  echo "   OK: objetos de 7.1 idénticos a antes de 7.2-A; filas conservadas ($filas_despues)"
+else
+  echo "FALLA: la reversión no dejó 7.1 como estaba" >&2
+  diff /tmp/etapa72_e7fp_before.txt /tmp/etapa72_e7fp_revertido.txt >&2 || true; exit 1
+fi
+# c) Revertir de nuevo aborta (ya no está aplicada) y volver a aplicar 7.2-A funciona
+if "${PSQL[@]}" -d "$DB" -f "$REV" 2>/dev/null; then echo "FALLA: revirtió dos veces" >&2; exit 1; fi
+"${PSQL[@]}" -d "$DB" -f "$M72" >/dev/null && echo "   OK: no revierte dos veces; 7.2-A se puede volver a aplicar"

@@ -54,6 +54,10 @@ Las migraciones nuevas van en `migrations/`, con un nombre que empiece con un ti
 
 `tests/run_onboarding_e2e.sh` (Etapa 7.2-B) corre la app real (build de Vite) en Chrome contra PostgreSQL + PostgREST locales y un gateway de pruebas que imita la URL de Supabase (`tests/onboarding/e2e/gateway.mjs`): usuarios nuevos, existentes, con progreso, viewer y con onboarding completado; errores de red; escritorio y celular. Con `HASTA_71=1` simula una base sin 7.2-A (como un Preview de Vercel, que usa Producción) y verifica que el onboarding queda inerte y no escribe. Requiere `POSTGREST_BIN`, `PLAYWRIGHT_CORE` (instalado fuera del proyecto) y Chrome; base descartable.
 
+`tests/run_magic_link_local.sh` (Etapa 7.2) prueba el flujo completo con autenticación real (GoTrue + Magic Link) sobre una base local con todas las migraciones, sin tocar Producción. Procedimiento: [`PRUEBA_MAGIC_LINK_7_2.md`](PRUEBA_MAGIC_LINK_7_2.md).
+
+`reversion/revertir_20261110000000.sql` revierte 7.2-A (no es una migración; uso manual con autorización). Aborta si hay respuestas guardadas salvo decisión explícita en la sesión; `run_local.sh` prueba que deja los objetos de 7.1 exactamente como antes de 7.2-A.
+
 `tests/run_supabase_local.ps1` y `tests/supabase_local_preflight.sql` siguen fijados a Etapa 7.1 (exigen exactamente tres migraciones): no cubren 7.2-A.
 
 ```

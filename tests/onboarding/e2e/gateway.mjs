@@ -2,8 +2,10 @@
 // Gateway LOCAL de pruebas que imita la URL de un proyecto Supabase para la
 // app real (solo pruebas E2E, nunca en producción):
 //   /rest/v1/*      → PostgREST local (RLS real)
-//   /auth/v1/user   → usuario del JWT de prueba (sin GoTrue)
-//   /auth/v1/logout → 204
+//   /auth/v1/*      → GoTrue real si GOTRUE_URL está definido (Magic Link
+//                     real; las redirecciones se devuelven tal cual).
+//                     Sin GOTRUE_URL: /auth/v1/user devuelve el usuario del
+//                     JWT de prueba y /auth/v1/logout responde 204.
 //   resto           → 404; WebSocket (Realtime) rechazado
 // Uso: GW_PORT=... PGRST_URL=http://127.0.0.1:3999 node gateway.mjs
 // =============================================================================
@@ -11,6 +13,7 @@ import http from "node:http";
 
 const PORT = Number(process.env.GW_PORT || 54399);
 const REST = process.env.PGRST_URL || "http://127.0.0.1:3999";
+const GOTRUE = process.env.GOTRUE_URL || "";
 const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-headers": "*",
@@ -33,17 +36,23 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
   try {
-    if (req.url.startsWith("/rest/v1")) {
+    const destino = req.url.startsWith("/rest/v1")
+      ? REST + req.url.slice("/rest/v1".length)
+      : GOTRUE && req.url.startsWith("/auth/v1")
+        ? GOTRUE + req.url.slice("/auth/v1".length)
+        : null;
+    if (destino) {
       const chunks = [];
       for await (const c of req) chunks.push(c);
       const headers = { ...req.headers };
       delete headers.host;
       delete headers["content-length"];
       delete headers.origin;
-      const r = await fetch(REST + req.url.slice("/rest/v1".length), {
+      const r = await fetch(destino, {
         method: req.method,
         headers,
         body: chunks.length ? Buffer.concat(chunks) : undefined,
+        redirect: "manual",
       });
       const out = { ...CORS };
       r.headers.forEach((v, k) => {

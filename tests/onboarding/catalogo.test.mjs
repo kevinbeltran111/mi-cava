@@ -93,3 +93,31 @@ test("niveles: tres valores del CHECK de 7.1 y descripción de principiante", ()
   assert.deepEqual(NIVELES_CONOCIMIENTO.map((n) => n.etiqueta), ["Estoy empezando", "Me gusta el vino", "Conozco bastante"]);
   assert.equal(NIVELES_CONOCIMIENTO[0].descripcion, "Todavía estoy conociendo los distintos vinos");
 });
+
+test("vista inicial = seis sugerencias + elegidas que no están entre ellas, sin duplicados", () => {
+  const visibles = (o) => [...o.seleccionadas, ...o.sugeridas].map((v) => v.id);
+  for (const tipos of [[], ["tinto"], ["espumoso"], ["blanco", "naranjo"], ["tinto", "espumoso"]]) {
+    const seis = organizarVariedades({ tipos }).sugeridas.map((v) => v.id);
+    assert.equal(seis.length, 6);
+    const casos = [
+      [],
+      [seis[0]],                       // elegida dentro de las seis
+      [seis[2], seis[5]],              // dos dentro
+      ["glera"],                        // fuera (o dentro según tipos)
+      [seis[1], "tannat", "glera"],     // mezcla
+      ["uva_futura", seis[0]],          // id desconocido conservado
+      [...seis],                        // las seis elegidas
+    ];
+    for (const sel of casos) {
+      const o = organizarVariedades({ tipos, seleccionadas: sel });
+      const v = visibles(o);
+      const esperado = [...new Set(sel), ...seis.filter((id) => !sel.includes(id))];
+      assert.deepEqual(v, esperado, `${tipos} / ${sel}`);
+      assert.equal(new Set(v).size, v.length, "sin duplicados");
+      for (const id of sel) assert.ok(v.includes(id), `selección ${id} visible`);
+      const todos = [...v, ...o.resto.map((x) => x.id)];
+      assert.equal(new Set(todos).size, todos.length);
+      assert.equal(todos.filter((id) => id !== "uva_futura").length, VARIEDADES.length, "ninguna excluida");
+    }
+  }
+});

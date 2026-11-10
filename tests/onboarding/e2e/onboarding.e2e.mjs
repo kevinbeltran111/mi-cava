@@ -29,6 +29,8 @@ const U = {
   viewer: "00000000-0000-0000-0000-000000000e20",
   completo: "00000000-0000-0000-0000-000000000e30",
   errores: "00000000-0000-0000-0000-000000000e40",
+  mezcla: "00000000-0000-0000-0000-000000000e50",
+  celular: "00000000-0000-0000-0000-000000000e60",
 };
 
 const T = {
@@ -188,7 +190,9 @@ test("B. usuario nuevo (escritorio): recorrido completo, prioridad, Atrás, pers
   const tras = await idsVariedades(page);
   assert.deepEqual(tras.slice(0, 3), ["chardonnay", "malbec", "tannat"]);
   for (const id of ["chardonnay", "malbec", "tannat"]) assert.ok(await presionada(tarjeta(page, "variedades", id)), id);
-  assert.equal(tras.length, 3 + 6);
+  const seisTintoEsp = organizarVariedades({ tipos: ["tinto", "espumoso"] }).sugeridas.map((v) => v.id);
+  const elegidas = ["chardonnay", "malbec", "tannat"];
+  assert.deepEqual(tras, [...elegidas, ...seisTintoEsp.filter((id) => !elegidas.includes(id))], "seis + elegidas fuera de ellas");
   await primaria(page).click();
 
   // 4. Conocimiento
@@ -460,4 +464,170 @@ test("G3. lectura colgada tras crear el perfil: espera acotada y entra a la cava
   assert.equal(await fila(U.nuevo3), null, "no se escribió nada");
   assert.deepEqual(errores, []);
   await context.close();
+});
+
+// -----------------------------------------------------------------------------
+// Verificación de integración (punto 1): seis sugerencias + elegidas fuera de
+// ellas, sin duplicados ni pérdidas, en el onboarding y en «Mis preferencias».
+// -----------------------------------------------------------------------------
+test("H. variedades: seis sugerencias + elegidas que no están entre ellas, sin duplicados", async () => {
+  const { context, page, errores } = await abrir(U.mezcla);
+  await invitacion(page).waitFor();
+  await invitacion(page).locator('[data-accion="primaria"]').click();
+  await paso(page, 2).waitFor();
+  const seis = organizarVariedades({ tipos: ["tinto"] }).sugeridas.map((v) => v.id);
+  assert.ok(seis.includes("malbec") && !seis.includes("glera"), "precondición: malbec dentro, glera fuera");
+  const ids = await idsVariedades(page);
+  assert.deepEqual(ids, ["malbec", "glera", ...seis.filter((id) => id !== "malbec")]);
+  assert.equal(ids.length, 7, "6 sugerencias + 1 elegida fuera de ellas");
+  assert.equal(new Set(ids).size, ids.length, "sin duplicados");
+  assert.ok(await presionada(tarjeta(page, "variedades", "malbec")));
+  assert.ok(await presionada(tarjeta(page, "variedades", "glera")));
+  // Marcar una de las seis no agrega tarjetas
+  await tarjeta(page, "variedades", seis[2]).click();
+  assert.equal((await idsVariedades(page)).length, 7);
+  await page.getByRole("button", { name: "Ver más variedades" }).click();
+  const todas = await idsVariedades(page);
+  assert.equal(todas.length, VARIEDADES.length);
+  assert.equal(new Set(todas).size, todas.length);
+  assert.deepEqual(todas.slice(0, 3), ["malbec", "glera", seis[2]], "elegidas agrupadas al ampliar");
+  await primaria(page).click();
+  await paso(page, 3).waitFor();
+  assert.deepEqual((await fila(U.mezcla)).preferred_grapes, ["malbec", "glera", seis[2]], "sin pérdidas");
+  await omitir(page).click();
+  await biblioteca(page, "Fede Mezcla").waitFor();
+  // Mismo criterio en «Mis preferencias»
+  await page.getByRole("button", { name: "Mis preferencias" }).click();
+  await page.locator('[data-mis-preferencias] [data-pregunta="variedades"]').waitFor();
+  const enModal = await idsVariedades(page);
+  const seisSinMalbec = seis.filter((id) => !["malbec", seis[2]].includes(id));
+  assert.deepEqual(enModal, ["malbec", "glera", seis[2], ...seisSinMalbec]);
+  assert.equal(new Set(enModal).size, enModal.length);
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+// -----------------------------------------------------------------------------
+// Verificación de integración (punto 2): «Mis preferencias» en celular.
+// Desplazamiento con gesto táctil real (CDP), selección por toque y acceso
+// permanente a Cancelar y Guardar, en tres tamaños de pantalla.
+// -----------------------------------------------------------------------------
+async function botonVisibleYTocable(page, accion) {
+  return page.evaluate((acc) => {
+    const b = document.querySelector(`[data-mis-preferencias] [data-accion="${acc}"]`);
+    if (!b) return { ok: false, motivo: "no existe" };
+    const r = b.getBoundingClientRect();
+    const dentro = r.top >= 0 && r.left >= 0 && r.bottom <= window.innerHeight && r.right <= window.innerWidth && r.height > 0;
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const arriba = document.elementFromPoint(cx, cy);
+    const tocable = Boolean(arriba && (arriba === b || b.contains(arriba)));
+    return { ok: dentro && tocable, dentro, tocable, rect: [r.top, r.bottom, window.innerHeight] };
+  }, accion);
+}
+// Arrastre con el dedo: eventos táctiles de bajo nivel (touchStart / touchMove
+// / touchEnd) que el navegador procesa como un gesto real. (El gesto
+// sintético Input.synthesizeScrollGesture no desplaza nada en este Chrome
+// sin pantalla, ni siquiera la página: no sirve para esta verificación.)
+async function deslizar(page, cdp, yDistance) {
+  const box = await page.locator(".onb-modal-cuerpo").boundingBox();
+  const x = Math.round(box.x + box.width / 2);
+  const recorrido = Math.min(Math.abs(yDistance), Math.round(box.height * 0.7));
+  const y0 = yDistance < 0 ? Math.round(box.y + box.height * 0.85) : Math.round(box.y + box.height * 0.15);
+  const y1 = yDistance < 0 ? y0 - recorrido : y0 + recorrido;
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: y0 }] });
+  for (let k = 1; k <= 12; k++) {
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y0 + ((y1 - y0) * k) / 12 }] });
+    await page.waitForTimeout(16);
+  }
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await page.waitForTimeout(400);
+}
+const scrollCuerpo = (page) => page.locator(".onb-modal-cuerpo").evaluate((el) => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight }));
+
+test("I. «Mis preferencias» en celular: desplazamiento táctil, selección y Cancelar/Guardar siempre accesibles", async () => {
+  const pantallas = [
+    { nombre: "390x844", viewport: { width: 390, height: 844 } },
+    { nombre: "360x640", viewport: { width: 360, height: 640 } },
+    { nombre: "844x390-horizontal", viewport: { width: 844, height: 390 } },
+  ];
+  for (const [i, pant] of pantallas.entries()) {
+    const ultimo = i === pantallas.length - 1;
+    const { context, page, errores } = await abrir(U.celular, { ...CELULAR, viewport: pant.viewport });
+    const cdp = await context.newCDPSession(page);
+    const escrituras = [];
+    page.on("request", (r) => r.url().includes("user_preferences") && r.method() !== "GET" && escrituras.push(r.method()));
+    await biblioteca(page, "Gabi Celular").waitFor();
+    await page.getByRole("button", { name: "Mis preferencias" }).tap();
+    await page.locator('[data-mis-preferencias] [data-pregunta="tipos"]').waitFor();
+    await sinDesborde(page, `modal ${pant.nombre}`);
+    const fondoAntes = await page.evaluate(() => document.scrollingElement.scrollTop);
+
+    for (const acc of ["cancelar", "guardar"]) {
+      const r = await botonVisibleYTocable(page, acc);
+      assert.ok(r.ok, `${pant.nombre}: ${acc} al abrir ${JSON.stringify(r)}`);
+    }
+    let s = await scrollCuerpo(page);
+    assert.ok(s.max > 0, `${pant.nombre}: el contenido es desplazable`);
+    assert.equal(s.top, 0);
+
+    const marcadasAntes = await page.locator('[data-mis-preferencias] [aria-pressed="true"]').count();
+    // Gesto táctil hasta el final
+    for (let k = 0; k < 12 && s.top < s.max - 1; k++) {
+      await deslizar(page, cdp, -Math.round(pant.viewport.height * 0.6));
+      s = await scrollCuerpo(page);
+    }
+    assert.ok(s.top >= s.max - 1, `${pant.nombre}: llega al final con el gesto (${s.top}/${s.max})`);
+    for (const acc of ["cancelar", "guardar"]) {
+      const r = await botonVisibleYTocable(page, acc);
+      assert.ok(r.ok, `${pant.nombre}: ${acc} tras desplazar ${JSON.stringify(r)}`);
+    }
+    assert.equal(await page.locator('[data-mis-preferencias] [aria-pressed="true"]').count(), marcadasAntes,
+      `${pant.nombre}: arrastrar no marca ni desmarca tarjetas`);
+    const fondoDespues = await page.evaluate(() => document.scrollingElement.scrollTop);
+    assert.equal(fondoDespues, fondoAntes, `${pant.nombre}: la página de fondo no se desplaza`);
+
+    // Selección por toque al final (conocimiento)
+    await tarjeta(page, "conocimiento", "advanced").tap();
+    assert.ok(await presionada(tarjeta(page, "conocimiento", "advanced")));
+    assert.ok(!(await presionada(tarjeta(page, "conocimiento", "beginner"))));
+
+    // Volver arriba con el gesto y tocar un tipo
+    for (let k = 0; k < 12 && s.top > 0; k++) {
+      await deslizar(page, cdp, Math.round(pant.viewport.height * 0.6));
+      s = await scrollCuerpo(page);
+    }
+    assert.equal(s.top, 0, `${pant.nombre}: vuelve arriba con el gesto`);
+    await tarjeta(page, "tipos", "rosado").tap();
+    assert.ok(await presionada(tarjeta(page, "tipos", "rosado")));
+    // Ampliar variedades y elegir la última
+    await page.getByRole("button", { name: "Ver más variedades" }).tap();
+    const ids = await idsVariedades(page);
+    assert.equal(new Set(ids).size, ids.length);
+    await tarjeta(page, "variedades", ids[ids.length - 1]).tap();
+    assert.ok(await presionada(tarjeta(page, "variedades", ids[ids.length - 1])));
+    for (const acc of ["cancelar", "guardar"]) {
+      const r = await botonVisibleYTocable(page, acc);
+      assert.ok(r.ok, `${pant.nombre}: ${acc} tras ampliar ${JSON.stringify(r)}`);
+    }
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: path.join(SHOTS, `celular-mis-preferencias-${pant.nombre}.png`) });
+
+    if (!ultimo) {
+      await page.locator('[data-mis-preferencias] [data-accion="cancelar"]').tap();
+      await page.locator("[data-mis-preferencias]").waitFor({ state: "detached" });
+      assert.deepEqual(escrituras, [], `${pant.nombre}: Cancelar no escribe`);
+    } else {
+      await page.locator('[data-mis-preferencias] [data-accion="guardar"]').tap();
+      await page.locator("[data-mis-preferencias]").waitFor({ state: "detached" });
+      const f = await fila(U.celular);
+      assert.deepEqual(f.preferred_wine_types, ["blanco", "rosado"]);
+      assert.equal(f.knowledge_level, "advanced");
+      assert.ok(f.preferred_grapes.includes(ids[ids.length - 1]));
+      assert.ok(f.preferred_grapes.includes("torrontes") && f.preferred_grapes.includes("glera"), "selecciones previas conservadas");
+      assert.equal(f.onboarding_status, "completed");
+    }
+    assert.deepEqual(errores, []);
+    await context.close();
+  }
 });

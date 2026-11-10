@@ -12,6 +12,8 @@
 # playwright-core no es dependencia del proyecto: instalarlo aparte
 # (p. ej. `npm i playwright-core` en otra carpeta) y pasar su ruta.
 # Capturas: SHOTS_DIR (default /tmp/onboarding-shots).
+# APP_SRC=/ruta compila la app desde otra copia del repo (p. ej. un
+# `git worktree` del frontend publicado) en lugar de este checkout.
 # =============================================================================
 set -euo pipefail
 
@@ -62,6 +64,7 @@ cleanup() {
   "${PSQL[@]}" -d postgres -c "drop database if exists \"$DB\" with (force);" >/dev/null || true
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM  # Ctrl+C o kill también limpian
 
 PGRST_DB_URI="postgres://authenticator@/$DB?host=$PGHOST&port=$PGPORT" \
 PGRST_DB_SCHEMAS=public PGRST_DB_ANON_ROLE=anon PGRST_JWT_SECRET="$SECRET" \
@@ -78,15 +81,25 @@ const h=b({alg:"HS256",typ:"JWT"}),p=b({role:"anon",exp:Math.floor(Date.now()/10
 console.log(`${h}.${p}.${c.createHmac("sha256",process.env.SECRET).update(h+"."+p).digest("base64url")}`)')"
 
 OUT="$(mktemp -d)"
-( cd "$ROOT" && VITE_SUPABASE_URL="http://127.0.0.1:$GW_PORT" VITE_SUPABASE_ANON_KEY="$ANON" \
+APP_SRC="${APP_SRC:-$ROOT}"
+( cd "$APP_SRC" && VITE_SUPABASE_URL="http://127.0.0.1:$GW_PORT" VITE_SUPABASE_ANON_KEY="$ANON" \
     npx vite build --outDir "$OUT" --emptyOutDir >"$LOGDIR/build.log" 2>&1 )
-( cd "$ROOT" && npx vite preview --outDir "$OUT" --port "$APP_PORT" --strictPort --host 127.0.0.1 >"$LOGDIR/preview.log" 2>&1 ) &
+echo "== App compilada desde $APP_SRC ($(git -C "$APP_SRC" rev-parse --short HEAD 2>/dev/null || echo '?'))"
+# Un solo proceso (sin npx/sh intermedios) para que el cierre lo termine;
+# si el puerto está ocupado (p. ej. un servidor de otra corrida) se aborta:
+# nunca se prueba una app distinta de la recién compilada.
+if curl -fs "http://127.0.0.1:$APP_PORT/" >/dev/null 2>&1; then
+  echo "ABORTADO: el puerto $APP_PORT ya está en uso." >&2; exit 1
+fi
+( cd "$APP_SRC" && exec node "$APP_SRC"/node_modules/vite/bin/vite.js preview --outDir "$OUT" --port "$APP_PORT" --strictPort --host 127.0.0.1 >"$LOGDIR/preview.log" 2>&1 ) &
 PIDS+=($!)
 
 for url in "http://127.0.0.1:$PGRST_PORT/" "http://127.0.0.1:$GW_PORT/rest/v1/" "http://127.0.0.1:$APP_PORT/"; do
   for _ in $(seq 1 75); do curl -fs "$url" >/dev/null 2>&1 && break; sleep 0.2; done
   curl -fs "$url" >/dev/null || { echo "No respondió $url" >&2; tail -20 "$LOGDIR"/*.log >&2; exit 1; }
 done
+curl -fsS "http://127.0.0.1:$APP_PORT/" | diff -q - "$OUT/index.html" >/dev/null \
+  || { echo "ABORTADO: la app servida en :$APP_PORT no es la recién compilada." >&2; exit 1; }
 echo "== PostgREST :$PGRST_PORT · gateway :$GW_PORT · app :$APP_PORT · base $DB"
 
 cd "$ROOT"
@@ -94,4 +107,4 @@ APP_URL="http://127.0.0.1:$APP_PORT" GW_URL="http://127.0.0.1:$GW_PORT" PGRST_UR
 IT_JWT_SECRET="$SECRET" PLAYWRIGHT_CORE="$PLAYWRIGHT_CORE" CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" \
 SHOTS_DIR="${SHOTS_DIR:-/tmp/onboarding-shots}" \
   node --test --test-concurrency=1 \
-    "tests/onboarding/e2e/$([[ "${HASTA_71:-0}" == "1" ]] && echo preview_sin_72a || echo onboarding).e2e.mjs"
+    "${E2E_FILE:-tests/onboarding/e2e/$([[ "${HASTA_71:-0}" == "1" ]] && echo preview_sin_72a || echo onboarding).e2e.mjs}"

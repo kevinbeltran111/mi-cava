@@ -139,9 +139,13 @@ export function prioridadVariedad(variedad, tipos) {
 //                  que se eligieron, aunque los tipos hayan cambiado o
 //                  ninguno las priorice. Un id desconocido se conserva
 //                  ({ id, etiqueta: id, desconocida: true }).
-//   sugeridas      las primeras `visibles` NO elegidas, por prioridad para
-//                  los tipos y luego por orden base. Sin tipos: orden base
-//                  (las seis iniciales).
+//   sugeridas      las `visibles` (6) primeras del catálogo por prioridad
+//                  para los tipos y luego por orden base, sin las ya elegidas
+//                  (que se muestran en su grupo). Sin tipos: las seis
+//                  iniciales. Una elegida que está entre las seis no se
+//                  reemplaza por una séptima: la vista inicial es siempre
+//                  «las seis sugerencias + las elegidas que no están entre
+//                  ellas», sin duplicados.
 //   resto          todas las demás no elegidas, mismo criterio.
 // seleccionadas + sugeridas + resto = catálogo completo (+ desconocidas),
 // sin repetidos: ninguna variedad queda excluida.
@@ -151,14 +155,14 @@ export function organizarVariedades({ tipos = [], seleccionadas = [], visibles =
   const grupoElegidas = elegidas.map(
     (id) => POR_ID.get(id) || Object.freeze({ id, etiqueta: String(id), orden: Infinity, relevancia: {}, desconocida: true })
   );
-  const noElegidas = VARIEDADES.filter((v) => !setElegidas.has(v.id))
-    .map((v) => ({ v, p: prioridadVariedad(v, tipos) }))
+  const porPrioridad = VARIEDADES.map((v) => ({ v, p: prioridadVariedad(v, tipos) }))
     .sort((a, b) => b.p - a.p || a.v.orden - b.v.orden)
     .map((x) => x.v);
+  const noElegida = (v) => !setElegidas.has(v.id);
   return {
     seleccionadas: grupoElegidas,
-    sugeridas: noElegidas.slice(0, visibles),
-    resto: noElegidas.slice(visibles),
+    sugeridas: porPrioridad.slice(0, visibles).filter(noElegida),
+    resto: porPrioridad.slice(visibles).filter(noElegida),
   };
 }
 
