@@ -52,6 +52,8 @@ Las migraciones nuevas van en `migrations/`, con un nombre que empiece con un ti
 
 `tests/run_preferencias_integracion.sh` (Etapa 7.2-A) prueba `src/onboarding/preferencias.js` con el `supabase-js` de la app contra PostgreSQL + PostgREST locales y RLS real (base descartable; requiere `POSTGREST_BIN` y `npm ci`). Las pruebas unitarias de JavaScript corren con `npm test`.
 
+`tests/run_onboarding_e2e.sh` (Etapa 7.2-B) corre la app real (build de Vite) en Chrome contra PostgreSQL + PostgREST locales y un gateway de pruebas que imita la URL de Supabase (`tests/onboarding/e2e/gateway.mjs`): usuarios nuevos, existentes, con progreso, viewer y con onboarding completado; errores de red; escritorio y celular. Con `HASTA_71=1` simula una base sin 7.2-A (como un Preview de Vercel, que usa Producción) y verifica que el onboarding queda inerte y no escribe. Requiere `POSTGREST_BIN`, `PLAYWRIGHT_CORE` (instalado fuera del proyecto) y Chrome; base descartable.
+
 `tests/run_supabase_local.ps1` y `tests/supabase_local_preflight.sql` siguen fijados a Etapa 7.1 (exigen exactamente tres migraciones): no cubren 7.2-A.
 
 ```
