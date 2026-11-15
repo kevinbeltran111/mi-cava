@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 2.2 — segunda conciliación documental · **Fecha de corte:** 2026-11-15 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 2.3 — cierre de Etapa 7.2 · **Fecha de corte:** 2026-11-15 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -14,7 +14,7 @@ Mi Cava es una biblioteca personal de vinos, no solo un inventario. Permite guar
 | UX-20 — Guardar / tener / abrir / probar sin stock | Cerrada y en Producción | 03 / 00 |
 | Etapa 7 — Inteligencia personal | En desarrollo por subetapas; verificar cierres y despliegues específicos | 05 |
 | Etapa 7.1 — Datos de inteligencia | Trabajo de base realizado; contrastar estado final | 05 / 99 |
-| Etapa 7.2 — Onboarding | Desarrollo 7.2-A/B integrado a main en merge f729c2f; validación funcional manual 14/14 informada; Producción no verificada | 05 |
+| Etapa 7.2 — Onboarding | **CERRADA 15/11/2026**. Migración 7.2-A aplicada/verificada; frontend 7.2-B publicado PR #7, merge f729c2f; Preview 14/14, Producción 6/6; monitoreo sin 4xx/5xx (cierre informado por usuario) | 05 |
 | UX-21 — Ajustes de vistas | Cerrada; merge en main y cuatro verificaciones de Producción informadas como OK | 03 / 00 |
 | Etapa 8 — Descubrir | Futuro, no autorizado | 00 |
 | Mobile — Android / iOS | Objetivo estratégico, ejecución sin programar | 00 / 99 |
@@ -26,7 +26,7 @@ Estados posibles: **pendiente de evaluación**, **por verificar**, **en diseño*
 
 | ID | Tema | Origen | Estado | Prioridad | Dependencia / disparador | Conversación |
 |---|---|---|---|---|---|---|
-| UX-22 | Personalidad e interacción del onboarding: microinteracciones y respuestas visuales manteniendo elegancia | 7.2-B, validación 15/11/2026 (14/14 funcional) | Pendiente de evaluación; no bloquea 7.2 | Media provisional | Feedback de testers | 05 / 03 |
+| UX-22 | Personalidad e interacción del onboarding: microinteracciones y respuestas visuales manteniendo elegancia | 7.2-B, validación 15/11/2026 (14/14 funcional) | Pendiente de evaluación; no bloqueó cierre de 7.2 | Media provisional | Feedback de testers | 05 / 03 |
 | SEC-01 | Revisar hallazgos preexistentes de seguridad de Supabase/Auth; determinar exposición efectiva y medidas | Revisión previa a publicación 7.2, 15/11/2026 | Pendiente de análisis; sin cambios autorizados | Alta para análisis | Antes de ampliar beta; revisión técnica específica | 99 |
 | DATA-01 | Normalización de origen: provincia vs región; Valle de Uco / Uco Valley / Mendoza | Etapas 6 y 7 | Pendiente de evaluación | Media | Cuando filtros o inteligencia requieran origen confiable | 05 / 99 |
 | UX-P01 | Imagen principal clickeable para iniciar foto/galería | Feedback beta Etapa 6 | Por verificar si ya se resolvió | Por definir | Conciliación con Producción | 03 |
@@ -94,3 +94,27 @@ Auditar conversaciones 02, 03, 04, 05 y 99, contrastar cada PIN con el estado ac
 **Regla de interpretación:** merge a `main` no equivale a despliegue de Producción. La publicación de 7.2 requiere confirmación por despliegue y/o pruebas en dominio productivo. Los commits no acreditan por sí solos la resolución de los PINs históricos de Etapa 6. UX-22 se mantiene pendiente aunque 7.2-B ya incluya microtransiciones.
 
 **Conciliación pendiente:** validar estado de UX-P01 a UX-P11 con reportes de cierre y experiencia real; revisar si TECH-01 fue mitigado por la documentación y migraciones nuevas; completar antecedentes jurídicos de 04. No reabrir nada por inferencia.
+
+## Hito de cierre — Etapa 7.2 (15/11/2026)
+**Estado: CERRADA, publicada y validada en Producción, según acta de cierre aportada por el usuario al chat 00.**
+- Migración 7.2-A aplicada y verificada.
+- Frontend 7.2-B publicado mediante PR #7; merge `f729c2f`.
+- Preview: 14/14 pruebas satisfactorias.
+- Producción: 6/6 pruebas satisfactorias.
+- Monitoreo posterior: sin errores HTTP 4xx/5xx.
+- Documento de cierre citado: `claude/PLAN_PUBLICACION_7_2.md`, sección 10. **No localizado en la ruta de `main` durante esta actualización; referencia documental por verificar, sin poner en duda el cierre comunicado.**
+- UX-22 y SEC-01 ya constan en el registro central; se conservan sin duplicados y sin autorización de ejecución.
+
+### Pendientes residuales del cierre (no bloqueantes; estado específico por verificar)
+| ID | Asunto | Estado | Prioridad de revisión | Disparador | Responsable |
+|---|---|---|---|---|---|
+| QA-72-IOS | Pruebas específicas Safari/iOS | Pendiente de verificar alcance y resultado | Media provisional | Antes de dar por cubierta compatibilidad iOS / móvil | 05 / 99 |
+| QA-72-RESEND | Pruebas específicas de Resend | Pendiente de verificar alcance y resultado | Media provisional | Antes de ampliar acceso y depender del flujo de emails | 99 |
+| QA-72-WSL | Pruebas específicas Windows/WSL | Pendiente de verificar alcance y resultado | Baja provisional | Próxima revisión del entorno de desarrollo | 99 |
+| OPS-72-RESTORE | Restauración v3.1 | Pendiente de verificar procedimiento, alcance y evidencia | Alta provisional por posible continuidad operativa; no implica riesgo confirmado | Antes de depender de recuperación ante incidentes | 99 |
+| GIT-72-CLEAN | Limpieza opcional de rama GitHub 7.2 | Opcional; no autorizada | Baja | Tras confirmar que no quedan referencias útiles | 99 |
+
+**Estos cinco identificadores son entradas de seguimiento documental, no defectos confirmados ni tareas aprobadas.** Sus detalles técnicos deberán contrastarse con el acta de cierre.
+
+### Próxima prioridad de producto
+Con 7.2 cerrada, el foco funcional de Etapa 7 pasa al diseño y desarrollo controlado de **«¿Qué tomo?»** en conversación 05. Antes de implementar: precisar alcance v1, puertas de entrada, contexto personal mínimo, candidatos y reglas de ranking, UX de recomendaciones, observabilidad, pruebas y resguardos de datos. La revisión SEC-01 se prioriza antes de ampliar la beta, en paralelo y sin autorizar cambios. No reabrir 7.2 por UX-22 salvo decisión posterior.
