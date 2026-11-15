@@ -38,7 +38,8 @@ Las migraciones nuevas van en `migrations/`, con un nombre que empiece con un ti
 
 | Orden | Archivo | Contenido | Estado en producción |
 |---|---|---|---|
-| 3 | `migrations/20261025000000_etapa7_modelo_inteligencia.sql` | Etapa 7, Fase 7.1: tablas `user_preferences`, `user_knowledge`, `recommendation_sessions`, `recommendation_items`, `recommendation_events`, `analytics_identity`, con RLS, policies, privilegios y triggers. No modifica objetos del baseline. | **No aplicada.** |
+| 3 | `migrations/20261025000000_etapa7_modelo_inteligencia.sql` | Etapa 7, Fase 7.1: tablas `user_preferences`, `user_knowledge`, `recommendation_sessions`, `recommendation_items`, `recommendation_events`, `analytics_identity`, con RLS, policies, privilegios y triggers. No modifica objetos del baseline. | Aplicada (historial de migraciones de Producción consultado el 2026-11-09). |
+| 4 | `migrations/20261110000000_etapa7_2_onboarding_respuesta_tipos.sql` | Etapa 7.2-A: columna `user_preferences.wine_types_answer` (NULL = sin responder, `skipped`, `no_preference`, `answered`) y su CHECK de coherencia con `preferred_wine_types` / `exploration_open`. Aditiva: no modifica columnas, constraints, policies, privilegios ni filas existentes. | **No aplicada.** |
 
 ### Pruebas locales
 
@@ -47,6 +48,17 @@ Las migraciones nuevas van en `migrations/`, con un nombre que empiece con un ti
 - una verificación de que los objetos del baseline quedan idénticos después de las migraciones (`tests/baseline_fingerprint.sql`);
 - las pruebas de Etapa 7 (`tests/etapa7_modelo_inteligencia_test.sql`): esquema, privilegios, policies, aislamiento entre usuarios, escritura, integridad y constraints;
 - la guarda que impide re-aplicar la migración de Etapa 7.
+- Etapa 7.2-A: que la migración solo agregue la columna y el CHECK a los objetos de 7.1 (`tests/etapa7_fingerprint.sql`), sus pruebas (`tests/etapa7_2_onboarding_test.sql`), su guarda de re-aplicación y, en una segunda base descartable, que no altere filas preexistentes de 7.1 en los cuatro estados de onboarding (`tests/etapa7_2_compat_seed.sql`, `tests/etapa7_2_compat_snapshot.sql`).
+
+`tests/run_preferencias_integracion.sh` (Etapa 7.2-A) prueba `src/onboarding/preferencias.js` con el `supabase-js` de la app contra PostgreSQL + PostgREST locales y RLS real (base descartable; requiere `POSTGREST_BIN` y `npm ci`). Las pruebas unitarias de JavaScript corren con `npm test`.
+
+`tests/run_onboarding_e2e.sh` (Etapa 7.2-B) corre la app real (build de Vite) en Chrome contra PostgreSQL + PostgREST locales y un gateway de pruebas que imita la URL de Supabase (`tests/onboarding/e2e/gateway.mjs`): usuarios nuevos, existentes, con progreso, viewer y con onboarding completado; errores de red; escritorio y celular. Con `HASTA_71=1` simula una base sin 7.2-A (como un Preview de Vercel, que usa Producción) y verifica que el onboarding queda inerte y no escribe. Requiere `POSTGREST_BIN`, `PLAYWRIGHT_CORE` (instalado fuera del proyecto) y Chrome; base descartable.
+
+`tests/run_magic_link_local.sh` (Etapa 7.2) prueba el flujo completo con autenticación real (GoTrue + Magic Link) sobre una base local con todas las migraciones, sin tocar Producción. Procedimiento: [`PRUEBA_MAGIC_LINK_7_2.md`](PRUEBA_MAGIC_LINK_7_2.md).
+
+`reversion/revertir_20261110000000.sql` revierte 7.2-A (no es una migración; uso manual con autorización). Aborta si hay respuestas guardadas salvo decisión explícita en la sesión; `run_local.sh` prueba que deja los objetos de 7.1 exactamente como antes de 7.2-A.
+
+`tests/run_supabase_local.ps1` y `tests/supabase_local_preflight.sql` siguen fijados a Etapa 7.1 (exigen exactamente tres migraciones): no cubren 7.2-A.
 
 ```
 PGHOST=<socket o host local> PGPORT=<puerto> PGUSER=postgres ./supabase/tests/run_local.sh

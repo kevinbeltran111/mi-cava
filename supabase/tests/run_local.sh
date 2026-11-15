@@ -3,7 +3,8 @@
 # Validación local de migraciones sobre una base PostgreSQL 17 DESCARTABLE.
 # =============================================================================
 # Crea una base nueva, aplica el shim de Supabase, los baselines SIN MODIFICAR,
-# las migraciones posteriores y las pruebas de Etapa 7.
+# las migraciones posteriores y las pruebas de Etapa 7 y 7.2-A (esta última
+# incluye una segunda base descartable, <TEST_DB>_compat72).
 #
 # NUNCA apuntar este script a un proyecto Supabase real.
 #
@@ -45,11 +46,20 @@ fingerprint() {
   "${PSQL[@]}" -d "$DB" -At -f "$HERE/baseline_fingerprint.sql"
 }
 
+# Huella de los objetos de Etapa 7.1 (tablas, columnas, constraints,
+# índices, triggers, policies, funciones intel_*, secuencia).
+fingerprint_e7() {
+  "${PSQL[@]}" -d "$DB" -At -f "$HERE/etapa7_fingerprint.sql"
+}
+
 echo "== Migraciones"
 for f in "$ROOT"/supabase/migrations/*.sql; do
   name="$(basename "$f")"
   if [[ "$name" == 20261025000000_* ]]; then
     fingerprint > /tmp/etapa7_fp_before.txt
+  fi
+  if [[ "$name" == 20261110000000_* ]]; then
+    fingerprint_e7 > /tmp/etapa72_e7fp_before.txt
   fi
   echo "   $name"
   "${PSQL[@]}" -d "$DB" -f "$f"
@@ -73,3 +83,85 @@ fi
 grep -q "alguna de las tablas de Etapa 7 ya existe" /tmp/etapa7_guard.err \
   && echo "   OK: abortó por la guarda" \
   || { echo "FALLA: abortó por otro motivo:" >&2; cat /tmp/etapa7_guard.err >&2; exit 1; }
+
+# =============================================================================
+# ETAPA 7.2-A (20261110000000)
+# =============================================================================
+M72="$ROOT/supabase/migrations/20261110000000_etapa7_2_onboarding_respuesta_tipos.sql"
+
+echo "== 7.2-A: objetos de 7.1 sin cambios salvo la columna y el CHECK nuevos"
+# (la huella "después" se toma antes de las pruebas de 7.1, que borran datos
+# pero no objetos; se recalcula acá porque la migración ya estaba aplicada)
+fingerprint_e7 > /tmp/etapa72_e7fp_after.txt
+diff /tmp/etapa72_e7fp_before.txt /tmp/etapa72_e7fp_after.txt > /tmp/etapa72_e7fp.diff || true
+removed="$(grep -c '^<' /tmp/etapa72_e7fp.diff || true)"
+added="$(grep '^>' /tmp/etapa72_e7fp.diff || true)"
+expected_added="> column|user_preferences|wine_types_answer|text|notnull=false|default=|acl=
+> constraint|user_preferences|user_preferences_wine_types_answer_check|CHECK (((wine_types_answer IS NULL) OR ((wine_types_answer = ANY (ARRAY['skipped'::text, 'no_preference'::text])) AND (cardinality(preferred_wine_types) = 0) AND (exploration_open = false)) OR ((wine_types_answer = 'answered'::text) AND ((cardinality(preferred_wine_types) > 0) OR (exploration_open = true)))))"
+if [[ "$removed" == "0" && "$added" == "$expected_added" ]]; then
+  echo "   OK: solo se agregaron la columna wine_types_answer y su CHECK"
+else
+  echo "FALLA: la migración 7.2-A cambió otros objetos de 7.1:" >&2
+  cat /tmp/etapa72_e7fp.diff >&2; exit 1
+fi
+
+echo "== Pruebas Etapa 7.2-A"
+"${PSQL[@]}" -d "$DB" -f "$HERE/etapa7_2_onboarding_test.sql"
+
+echo "== Guarda: re-aplicar la migración 7.2-A debe abortar sin cambios"
+if "${PSQL[@]}" -d "$DB" -f "$M72" 2>/tmp/etapa72_guard.err; then
+  echo "FALLA: la migración 7.2-A se re-aplicó" >&2; exit 1
+fi
+grep -q "wine_types_answer ya existe" /tmp/etapa72_guard.err \
+  && echo "   OK: abortó por la guarda" \
+  || { echo "FALLA: abortó por otro motivo:" >&2; cat /tmp/etapa72_guard.err >&2; exit 1; }
+
+echo "== 7.2-A sobre filas preexistentes de 7.1 (base aparte: ${DB}_compat72)"
+DBC="${DB}_compat72"
+"${PSQL[@]}" -d postgres -c "drop database if exists \"$DBC\" with (force);"
+"${PSQL[@]}" -d postgres -c "create database \"$DBC\";"
+sed '/^create role /d' "$HERE/local_shim.sql" | "${PSQL[@]}" -d "$DBC"
+for f in "$ROOT"/supabase/migrations/*.sql; do
+  [[ "$(basename "$f")" < "20261110000000" ]] || continue
+  "${PSQL[@]}" -d "$DBC" -f "$f"
+done
+"${PSQL[@]}" -d "$DBC" -f "$HERE/etapa7_2_compat_seed.sql"
+snap_before="$("${PSQL[@]}" -d "$DBC" -At -f "$HERE/etapa7_2_compat_snapshot.sql")"
+"${PSQL[@]}" -d "$DBC" -f "$M72"
+snap_after="$("${PSQL[@]}" -d "$DBC" -At -f "$HERE/etapa7_2_compat_snapshot.sql")"
+nulls="$("${PSQL[@]}" -d "$DBC" -At -c "select count(*) from public.user_preferences where wine_types_answer is null")"
+valid="$("${PSQL[@]}" -d "$DBC" -At -c "select convalidated from pg_constraint where conname = 'user_preferences_wine_types_answer_check'")"
+echo "   antes:   $snap_before"
+echo "   después: $snap_after"
+if [[ "$snap_before" == "$snap_after" && "$snap_before" == *"filas=4" && "$nulls" == "4" && "$valid" == "t" ]]; then
+  echo "   OK: 4 filas (never/started/completed/skipped) sin cambios, respuesta NULL, CHECK validado"
+else
+  echo "FALLA: la migración 7.2-A alteró filas existentes o no validó (nulls=$nulls, validado=$valid)" >&2; exit 1
+fi
+"${PSQL[@]}" -d postgres -c "drop database if exists \"$DBC\" with (force);"
+
+echo "== Reversión de 7.2-A (supabase/reversion/revertir_20261110000000.sql)"
+REV="$ROOT/supabase/reversion/revertir_20261110000000.sql"
+# a) En la base principal hay respuestas: sin la decisión explícita debe abortar sin cambios
+if "${PSQL[@]}" -d "$DB" -f "$REV" 2>/tmp/etapa72_rev.err; then
+  echo "FALLA: la reversión borró respuestas sin la decisión explícita" >&2; exit 1
+fi
+grep -q "fila(s) tienen respuesta" /tmp/etapa72_rev.err \
+  && "${PSQL[@]}" -d "$DB" -Atc "select count(*) from information_schema.columns where table_name='user_preferences' and column_name='wine_types_answer'" | grep -qx 1 \
+  && echo "   OK: con respuestas guardadas aborta y no cambia nada" \
+  || { echo "FALLA: abortó por otro motivo o cambió algo:" >&2; cat /tmp/etapa72_rev.err >&2; exit 1; }
+# b) Con la decisión explícita revierte y deja los objetos de 7.1 exactamente como antes de 7.2-A
+filas_antes="$("${PSQL[@]}" -d "$DB" -At -c "select count(*) from public.user_preferences")"
+"${PSQL[@]}" -d "$DB" -c "set micava.revertir_con_datos = 'si';" -f "$REV" >/dev/null 2>&1 \
+  || { echo "FALLA: la reversión con decisión explícita no se aplicó" >&2; exit 1; }
+"${PSQL[@]}" -d "$DB" -At -f "$HERE/etapa7_fingerprint.sql" > /tmp/etapa72_e7fp_revertido.txt
+filas_despues="$("${PSQL[@]}" -d "$DB" -At -c "select count(*) from public.user_preferences")"
+if diff -q /tmp/etapa72_e7fp_before.txt /tmp/etapa72_e7fp_revertido.txt >/dev/null && [[ "$filas_antes" == "$filas_despues" ]]; then
+  echo "   OK: objetos de 7.1 idénticos a antes de 7.2-A; filas conservadas ($filas_despues)"
+else
+  echo "FALLA: la reversión no dejó 7.1 como estaba" >&2
+  diff /tmp/etapa72_e7fp_before.txt /tmp/etapa72_e7fp_revertido.txt >&2 || true; exit 1
+fi
+# c) Revertir de nuevo aborta (ya no está aplicada) y volver a aplicar 7.2-A funciona
+if "${PSQL[@]}" -d "$DB" -f "$REV" 2>/dev/null; then echo "FALLA: revirtió dos veces" >&2; exit 1; fi
+"${PSQL[@]}" -d "$DB" -f "$M72" >/dev/null && echo "   OK: no revierte dos veces; 7.2-A se puede volver a aplicar"

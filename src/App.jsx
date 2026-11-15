@@ -25,6 +25,10 @@ import {
   List,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
+// Etapa 7.2-B: onboarding de preferencias (lógica y UI fuera de este archivo).
+import { Onboarding, InvitacionOnboarding, MisPreferencias } from "./onboarding/Onboarding.jsx";
+import { CARGA, ESTADOS, PASOS, leerPreferencias, omitirOnboarding, pasoParaReanudar } from "./onboarding/preferencias.js";
+import { decidirOnboarding, rolConCava, lecturaConTiempoLimite, escrituraConTiempoLimite } from "./onboarding/flujo.js";
 
 // Expone el cliente para poder probar cosas desde la consola del navegador
 // mientras no tenemos el botón de Administración visible en pantalla.
@@ -62,6 +66,8 @@ const STAR_PATH =
 
 const SERIF = "Georgia, 'Times New Roman', serif";
 const SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+// 7.2-B: la misma paleta, agrupada para pasarla a los componentes del onboarding.
+const TEMA = { BORDEAUX, BORDEAUX_DARK, GOLD, GOLD_SOFT, CREAM, CARD_BG, INK, MUTED, BORDER, DANGER, SERIF, SANS };
 
 const PHOTOS_BUCKET = "etiquetas";
 
@@ -2713,6 +2719,39 @@ export default function App() {
   const [showForm, setShowForm] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  // ---- Etapa 7.2-B: onboarding de preferencias ----
+  // lecturaPrefs: { carga: pendiente | sin_registro | con_registro | error, preferencias }
+  const [lecturaPrefs, setLecturaPrefs] = useState({ carga: CARGA.PENDIENTE });
+  // true solo si el perfil se creó en esta sesión (ProfileSetup): usuario nuevo.
+  const [perfilRecienCreado, setPerfilRecienCreado] = useState(false);
+  // Onboarding abierto desde la invitación: { pasoInicial, iniciarAlAbrir }.
+  const [onboardingAbierto, setOnboardingAbierto] = useState(null);
+  // La invitación no vuelve a mostrarse en la sesión si «Ahora no» no pudo guardarse.
+  const [invitacionOculta, setInvitacionOculta] = useState(false);
+  const [invitacionOcupada, setInvitacionOcupada] = useState(false);
+  const [showPreferencias, setShowPreferencias] = useState(false);
+  const prefsSeqRef = useRef(0);
+  const prefsUserId = session?.user?.id ?? null;
+  const prefsRol = profile ? profile.role : null;
+
+  useEffect(() => {
+    setPerfilRecienCreado(false);
+    setOnboardingAbierto(null);
+    setInvitacionOculta(false);
+    setShowPreferencias(false);
+  }, [prefsUserId]);
+
+  // Solo roles con cava propia leen preferencias. La lectura nunca bloquea la
+  // biblioteca (salvo el instante posterior a crear el perfil) y tiene un
+  // tiempo límite: si falla, no se muestra el onboarding.
+  useEffect(() => {
+    const seq = ++prefsSeqRef.current;
+    setLecturaPrefs({ carga: CARGA.PENDIENTE });
+    if (!prefsUserId || !rolConCava(prefsRol)) return;
+    lecturaConTiempoLimite(leerPreferencias(supabase, prefsUserId)).then((l) => {
+      if (seq === prefsSeqRef.current) setLecturaPrefs(l);
+    });
+  }, [prefsUserId, prefsRol]);
 
   // ---- INSTRUMENTACIÓN TEMPORAL UX-10 (diagnóstico, no toca lógica) ----
   useEffect(() => {
@@ -2948,7 +2987,10 @@ export default function App() {
 
   const handleCreateProfile = async (nombre) => {
     const { data, error } = await supabase.from("profiles").insert({ id: session.user.id, nombre }).select().single();
-    if (!error) setProfile(data);
+    if (!error) {
+      setPerfilRecienCreado(true); // 7.2-B: usuario nuevo
+      setProfile(data);
+    }
   };
 
   // UX-11/12/13 (P0): un error acá YA NO cierra el modal, ni para alta
@@ -3329,6 +3371,51 @@ export default function App() {
     return <ProfileSetup onSubmit={handleCreateProfile} />;
   }
 
+  // ---- Etapa 7.2-B: onboarding ----
+  const decisionOnboarding = session && profile ? decidirOnboarding({ rol: profile.role, lectura: lecturaPrefs, perfilRecienCreado }) : "nada";
+  const cerrarOnboarding = ({ preferencias, confirmado }) => {
+    setOnboardingAbierto(null);
+    setPerfilRecienCreado(false);
+    if (preferencias) setLecturaPrefs({ carga: CARGA.CON_REGISTRO, preferencias });
+    if (!confirmado) setInvitacionOculta(true);
+  };
+  // Usuario nuevo: breve espera hasta saber si ya tiene preferencias (con tiempo límite).
+  if (session && profile && perfilRecienCreado && decisionOnboarding === null && !onboardingAbierto) {
+    return (
+      <div style={{ minHeight: "100vh", background: CREAM, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Loader2 size={28} color={MUTED} style={{ animation: "spin 0.8s linear infinite" }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      </div>
+    );
+  }
+  if (session && profile && (onboardingAbierto || decisionOnboarding === "pantalla")) {
+    const prefsActuales = lecturaPrefs.preferencias || null;
+    return (
+      <Onboarding
+        client={supabase}
+        userId={session.user.id}
+        preferencias={prefsActuales}
+        pasoInicial={onboardingAbierto ? onboardingAbierto.pasoInicial : pasoParaReanudar(prefsActuales)}
+        iniciarAlAbrir={onboardingAbierto ? onboardingAbierto.iniciarAlAbrir : false}
+        tema={TEMA}
+        onSalir={cerrarOnboarding}
+      />
+    );
+  }
+  const mostrarInvitacion = decisionOnboarding === "invitacion" && !invitacionOculta;
+  const abrirDesdeInvitacion = () => {
+    const p = lecturaPrefs.preferencias || null;
+    const enCurso = p?.estado === ESTADOS.STARTED;
+    setOnboardingAbierto({ pasoInicial: Math.max(PASOS.TIPOS, pasoParaReanudar(p)), iniciarAlAbrir: !enCurso });
+  };
+  const omitirDesdeInvitacion = async () => {
+    setInvitacionOcupada(true);
+    const r = await escrituraConTiempoLimite(omitirOnboarding(supabase, session.user.id));
+    setInvitacionOcupada(false);
+    if (r.ok && r.preferencias) setLecturaPrefs({ carga: CARGA.CON_REGISTRO, preferencias: r.preferencias });
+    else setInvitacionOculta(true);
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: CREAM, fontFamily: SANS, color: INK }}>
       <div style={{ background: `linear-gradient(135deg, ${BORDEAUX} 0%, ${BORDEAUX_DARK} 100%)`, padding: "24px 24px 20px" }}>
@@ -3345,6 +3432,14 @@ export default function App() {
               {hasProfile ? (
                 <>
                   Entraste como <strong>{profile.nombre}</strong> ·{" "}
+                  {hasCava && (
+                    <>
+                      <button onClick={() => setShowPreferencias(true)} style={{ background: "none", border: "none", color: GOLD_SOFT, textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 13.5 }}>
+                        Mis preferencias
+                      </button>{" "}
+                      ·{" "}
+                    </>
+                  )}
                   <button onClick={() => supabase.auth.signOut()} style={{ background: "none", border: "none", color: GOLD_SOFT, textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 13.5 }}>
                     cerrar sesión
                   </button>
@@ -3405,6 +3500,15 @@ export default function App() {
           </div>
         ) : (
         <>
+        {mostrarInvitacion && (
+          <InvitacionOnboarding
+            tema={TEMA}
+            enCurso={lecturaPrefs.preferencias?.estado === ESTADOS.STARTED}
+            ocupado={invitacionOcupada}
+            onEmpezar={abrirDesdeInvitacion}
+            onAhoraNo={omitirDesdeInvitacion}
+          />
+        )}
         {wines.length > 0 && (
           <div style={{ marginBottom: 22 }}>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -3578,6 +3682,19 @@ export default function App() {
           onAgregarBotella={handleAgregarBotella}
           onOpenWine={handleOpenWine}
           onCancel={() => { setShowForm(false); setEditing(null); }}
+        />
+      )}
+
+      {showPreferencias && hasCava && (
+        <MisPreferencias
+          client={supabase}
+          userId={session.user.id}
+          lecturaInicial={lecturaPrefs}
+          tema={TEMA}
+          onCerrar={(preferencias) => {
+            setShowPreferencias(false);
+            if (preferencias) setLecturaPrefs({ carga: CARGA.CON_REGISTRO, preferencias });
+          }}
         />
       )}
 
