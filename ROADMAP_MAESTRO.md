@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 2.0 inicial · **Fecha de corte:** 2026-11-15 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 2.1 — primera conciliación histórica · **Fecha de corte:** 2026-11-15 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -15,6 +15,7 @@ Mi Cava es una biblioteca personal de vinos, no solo un inventario. Permite guar
 | Etapa 7 — Inteligencia personal | En desarrollo por subetapas; verificar cierres y despliegues específicos | 05 |
 | Etapa 7.1 — Datos de inteligencia | Trabajo de base realizado; contrastar estado final | 05 / 99 |
 | Etapa 7.2 — Onboarding | Validación funcional 7.2-B: 14/14 (15/11/2026); estado de publicación no inferido | 05 |
+| UX-21 — Ajustes de vistas | Cerrada; merge en main y cuatro verificaciones de Producción informadas como OK | 03 / 00 |
 | Etapa 8 — Descubrir | Futuro, no autorizado | 00 |
 | Mobile — Android / iOS | Objetivo estratégico, ejecución sin programar | 00 / 99 |
 | Legal, privacidad y marca | Frente paralelo activo | 04 |
@@ -33,7 +34,7 @@ Estados posibles: **pendiente de evaluación**, **por verificar**, **en diseño*
 | UX-P03 | Navegación «Atrás» en alta de vino | Feedback beta Etapa 6 | Por verificar | Por definir | Conciliación con Producción | 03 |
 | UX-P04 | Redundancia de «Prefiero cargar a mano» | Feedback beta Etapa 6 | Por verificar | Por definir | Conciliación con Producción | 03 |
 | UX-P05 | Fotografías con varias botellas | Feedback beta Etapa 6 | Por verificar | Por definir | Validar incidencia y tratamiento actual | 03 |
-| UX-P06 | Ilustración/ícono de copa y consistencia visual | Feedback beta Etapa 5/6 | Por verificar; hubo corrección previa | Por definir | Conciliación con Producción | 03 |
+| UX-P06 | Ilustración/ícono de copa y consistencia visual | Feedback beta Etapa 5/6 | Intervención previa informada; verificar si resta algo | Por definir | Conciliación con Producción | 03 |
 | UX-P07 | Tutorial inicial / globos de ayuda | Ideas Etapa 6 | Pendiente de evaluación | Baja provisional | Solo con evidencia de dificultad de uso | 03 |
 | UX-P08 | Consistencia de nombre «Mi Cava» vs «Cava Vinos» | Etapa 6 / marca | Pendiente de evaluación | Media | Definición de arquitectura de marca | 04 / 03 |
 | UX-P09 | Refresco/loader al regresar a la app | Etapa 6 | Por verificar | Por definir | Reproducción con beta | 03 |
@@ -69,3 +70,14 @@ Estados posibles: **pendiente de evaluación**, **por verificar**, **en diseño*
 
 ## Próxima conciliación
 Auditar conversaciones 02, 03, 04, 05 y 99, contrastar cada PIN con el estado actual, detectar duplicados, y confirmar responsables y disparadores. No alterar código ni base de datos como parte de esa conciliación.
+
+## Conciliación histórica — pasada 1 (15/11/2026)
+**Confirmaciones procedentes de informes del usuario:** UX-20 cerrada y en Producción; UX-21 mergeada a `main` con cuatro comprobaciones de Producción satisfactorias; Etapa 7.2-B validada funcionalmente 14/14 (sin inferir publicación). Ninguno de esos hitos autoriza nuevos cambios.
+
+**Pendientes confirmados:** UX-22 (evaluación UX con testers), SEC-01 (análisis de riesgo previo a ampliación de beta), DATA-01 (normalización de origen para usos futuros), MOB-01 (objetivo estratégico), M01 y frentes legales según secuencia. Los otros ítems «por verificar» no se convierten en bugs activos por figurar en esta lista.
+
+**Aclaración sobre onboarding:** La idea inicial de preguntar bodegas no debe confundirse con una decisión vigente de 7.2: se descartó del onboarding inicial y se conserva como evolución posible del perfil. La selección de tipos prioriza el orden de cepas, no excluye otras. La pregunta de nivel de conocimiento sí integra el diseño de 7.2.
+
+**Fuentes y límites de esta pasada:** conversaciones y decisiones disponibles en el Proyecto; archivo maestro en esta rama; consulta a issues/PRs del repositorio sin resultados adicionales para la búsqueda efectuada. No se ha inspeccionado exhaustivamente todo el historial de Git ni comprobado manualmente cada pantalla de Producción. Se requiere una segunda pasada sobre artefactos y cierres específicos de los chats 02/03/05/99 antes de declarar el inventario completo.
+
+**Regla de cierre:** el registro de un hito informado como cerrado conserva su fuente (confirmación del usuario). El estado de despliegue de otro hito no se deduce por proximidad de fecha o etapa.
