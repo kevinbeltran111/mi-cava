@@ -1,15 +1,18 @@
 // =============================================================================
 // Etapa 7.2-B: interfaz del onboarding de preferencias y «Mis preferencias».
 // =============================================================================
-// Diseño aprobado: opción A, tarjetas tipográficas (sin fotos ni íconos
-// decorativos). Usa la paleta real de Mi Cava, que App.jsx pasa como `tema`
-// (no se duplica ni se redefine acá).
+// Diseño aprobado: opción A, tarjetas tipográficas (sin fotos). Ajustes de UX
+// previos a Producción («elegante, pero con personalidad»): check discreto en
+// la tarjeta elegida, indicador de progreso de tres etapas, «Ver menos
+// variedades» y un adorno con la copa de la marca en bienvenida y cierre.
+// Usa la paleta real de Mi Cava, que App.jsx pasa como `tema` (no se duplica
+// ni se redefine acá).
 // Persistencia: src/onboarding/preferencias.js (7.2-A). Reglas: flujo.js.
 // =============================================================================
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, X, Loader2 } from "lucide-react";
-import { TIPOS_VINO, NIVELES_CONOCIMIENTO, organizarVariedades, etiquetaVariedad } from "./catalogo.js";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { ArrowLeft, X, Loader2, Check, Wine } from "lucide-react";
+import { TIPOS_VINO, NIVELES_CONOCIMIENTO, etiquetaVariedad } from "./catalogo.js";
 import {
   CARGA,
   PASOS,
@@ -30,6 +33,7 @@ import {
   tiposParaPriorizar,
   alternarEnLista,
   alternarNivel,
+  variedadesVisibles,
   cambiosEdicion,
   lecturaConTiempoLimite,
   escrituraConTiempoLimite,
@@ -47,6 +51,8 @@ export const TEXTOS = Object.freeze({
   probarTodo: "Me gusta probar de todo",
   variedadesTitulo: "¿Hay alguna variedad que te guste especialmente?",
   verMas: "Ver más variedades",
+  verMenos: "Ver menos variedades",
+  progreso: (n, total) => `Paso ${n} de ${total}`,
   conocimientoTitulo: "¿Cómo es tu relación con el vino?",
   cierreTitulo: "Listo. Ya nos conocemos un poco mejor",
   cierreTexto: "Mi Cava va a ir aprendiendo de tus favoritos, tus puntuaciones y tus experiencias.",
@@ -77,8 +83,11 @@ function cssOnboarding(t) {
 .onb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .onb-lista { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .onb-sep { height: 1px; background: ${t.BORDER}; margin: 16px 0; border: 0; }
-.onb-card { appearance: none; -webkit-appearance: none; font: inherit; text-align: left; cursor: pointer; box-sizing: border-box; width: 100%; min-height: 52px; padding: 13px 14px; border-radius: 10px; border: 1px solid ${t.BORDER}; background: ${t.CARD_BG}; color: ${t.INK}; display: flex; flex-direction: column; justify-content: center; gap: 3px; transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease; -webkit-tap-highlight-color: transparent; }
+.onb-card { appearance: none; -webkit-appearance: none; font: inherit; text-align: left; cursor: pointer; box-sizing: border-box; width: 100%; min-height: 52px; padding: 13px 30px 13px 14px; border-radius: 10px; border: 1px solid ${t.BORDER}; background: ${t.CARD_BG}; color: ${t.INK}; display: flex; flex-direction: column; justify-content: center; gap: 3px; position: relative; transition: border-color 0.16s ease-out, background-color 0.16s ease-out, color 0.16s ease-out, box-shadow 0.16s ease-out; -webkit-tap-highlight-color: transparent; }
 .onb-card:hover { border-color: ${t.GOLD}; }
+.onb-card:active:not(:disabled) { box-shadow: inset 0 0 0 1px ${t.GOLD}; }
+.onb-card-check { position: absolute; top: 8px; right: 8px; width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: ${t.GOLD_SOFT}; color: ${t.BORDEAUX}; opacity: 0; transform: scale(0.7); transition: opacity 0.16s ease-out, transform 0.16s ease-out; pointer-events: none; }
+.onb-card[aria-pressed="true"] .onb-card-check { opacity: 1; transform: scale(1); }
 .onb-card:focus-visible { outline: 2px solid ${t.GOLD}; outline-offset: 2px; }
 .onb-card-titulo { font-family: ${t.SERIF}; font-size: 16px; line-height: 1.3; overflow-wrap: anywhere; }
 .onb-card-desc { font-size: 13px; color: ${t.MUTED}; line-height: 1.35; }
@@ -97,6 +106,19 @@ function cssOnboarding(t) {
 .onb-omitir:disabled { cursor: default; opacity: 0.6; }
 .onb-error { margin: 0; background: #F5E6E1; border: 1px solid ${t.DANGER}; color: ${t.DANGER}; padding: 10px 14px; border-radius: 8px; font-size: 13.5px; }
 .onb-spin { animation: onb-spin 0.8s linear infinite; }
+
+.onb-prog { margin: -6px 0 18px; }
+.onb-prog-txt { margin: 0 0 7px; font-size: 12px; letter-spacing: 0.04em; color: ${t.MUTED}; }
+.onb-prog-barra { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.onb-prog-barra li { min-width: 0; }
+.onb-prog-seg { display: block; height: 2px; border-radius: 1px; background: ${t.BORDER}; transition: background-color 0.2s ease-out; }
+.onb-prog-barra li[data-estado="hecho"] .onb-prog-seg { background: ${t.GOLD}; }
+.onb-prog-barra li[data-estado="actual"] .onb-prog-seg { background: ${t.BORDEAUX}; }
+.onb-prog-etq { display: none; margin-top: 6px; font-size: 11.5px; color: ${t.MUTED}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.onb-prog-barra li[data-estado="actual"] .onb-prog-etq { color: ${t.INK}; }
+
+.onb-adorno { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 0 auto 22px; color: ${t.GOLD}; }
+.onb-adorno-linea { width: 44px; height: 1px; background: ${t.GOLD}; opacity: 0.55; }
 @keyframes onb-spin { to { transform: rotate(360deg); } }
 
 .onb-invita { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; background: ${t.CARD_BG}; border: 1px solid ${t.BORDER}; border-left: 3px solid ${t.GOLD}; border-radius: 10px; padding: 14px 16px; margin-bottom: 20px; }
@@ -123,6 +145,12 @@ function cssOnboarding(t) {
   .onb-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .onb-acciones { align-items: center; }
   .onb-acciones .onb-primario { min-width: 260px; }
+  .onb-prog-etq { display: block; }
+  .onb-prog-actual { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .onb-card, .onb-card-check, .onb-prog-seg { transition: none; }
+  .onb-card-check { transform: none; }
 }
 @media (max-width: 599px) {
   .onb-modal-fondo { padding: 0; align-items: stretch; }
@@ -145,6 +173,9 @@ function Tarjeta({ titulo, descripcion, seleccionada, onClick, disabled, dataId 
     <button type="button" className="onb-card" aria-pressed={seleccionada} onClick={onClick} disabled={disabled} data-id={dataId}>
       <span className="onb-card-titulo">{titulo}</span>
       {descripcion && <span className="onb-card-desc">{descripcion}</span>}
+      <span className="onb-card-check" aria-hidden="true">
+        <Check size={11} strokeWidth={3} />
+      </span>
     </button>
   );
 }
@@ -189,23 +220,41 @@ export function PreguntaTipos({ seleccion, onChange, disabled, etiquetaId }) {
 }
 
 // El orden se calcula al mostrar la pregunta, al cambiar los tipos que la
-// priorizan y al pulsar «Ver más variedades»; no al marcar una variedad, para
-// que las tarjetas no se muevan bajo el dedo. En cada recálculo las elegidas
-// quedan agrupadas primero.
-export function PreguntaVariedades({ seleccionadas, tipos, onChange, disabled, etiquetaId }) {
-  const [expandido, setExpandido] = useState(false);
+// priorizan y al pulsar «Ver más / Ver menos variedades»; no al marcar una
+// variedad, para que las tarjetas no se muevan bajo el dedo. En cada recálculo
+// las elegidas quedan agrupadas primero (contraer nunca oculta una elegida).
+// `expandido` / `onExpandidoChange`: estado de interfaz que puede guardar el
+// componente padre (el onboarding lo conserva al ir y volver con «Atrás»); si
+// no se pasan, se guarda acá. Nunca se persiste en Supabase.
+export function PreguntaVariedades({ seleccionadas, tipos, onChange, disabled, etiquetaId, expandido: expandidoProp, onExpandidoChange }) {
+  const [expandidoLocal, setExpandidoLocal] = useState(false);
+  const controlado = typeof expandidoProp === "boolean";
+  const expandido = controlado ? expandidoProp : expandidoLocal;
+  const setExpandido = (v) => {
+    if (!controlado) setExpandidoLocal(v);
+    onExpandidoChange?.(v);
+  };
   const selRef = useRef(seleccionadas);
   selRef.current = seleccionadas;
   const claveTipos = tipos.join(",");
-  const orden = useMemo(
-    () => organizarVariedades({ tipos, seleccionadas: selRef.current }),
+  const { visibles, hayAlternancia } = useMemo(
+    () => variedadesVisibles({ tipos, seleccionadas: selRef.current, expandido }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [claveTipos, expandido]
   );
-  const visibles = [...orden.seleccionadas, ...orden.sugeridas, ...(expandido ? orden.resto : [])];
+  const gridId = useId();
+  const botonRef = useRef(null);
+  const alternado = useRef(false);
+  // Al contraer, la lista se acorta: el botón conserva el foco y se acerca a
+  // la vista sin animación. Al expandir no se desplaza nada.
+  useEffect(() => {
+    if (!alternado.current) return;
+    alternado.current = false;
+    if (!expandido) botonRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [expandido]);
   return (
-    <div role="group" aria-labelledby={etiquetaId} data-pregunta="variedades">
-      <div className="onb-grid">
+    <div role="group" aria-labelledby={etiquetaId} data-pregunta="variedades" data-expandido={expandido ? "si" : "no"}>
+      <div className="onb-grid" id={gridId}>
         {visibles.map((v) => (
           <Tarjeta
             key={v.id}
@@ -217,9 +266,21 @@ export function PreguntaVariedades({ seleccionadas, tipos, onChange, disabled, e
           />
         ))}
       </div>
-      {!expandido && orden.resto.length > 0 && (
-        <button type="button" className="onb-mas" onClick={() => setExpandido(true)} disabled={disabled}>
-          {TEXTOS.verMas}
+      {hayAlternancia && (
+        <button
+          type="button"
+          ref={botonRef}
+          className="onb-mas"
+          aria-expanded={expandido}
+          aria-controls={gridId}
+          data-accion="alternar-variedades"
+          onClick={() => {
+            alternado.current = true;
+            setExpandido(!expandido);
+          }}
+          disabled={disabled}
+        >
+          {expandido ? TEXTOS.verMenos : TEXTOS.verMas}
         </button>
       )}
     </div>
@@ -245,6 +306,48 @@ export function PreguntaConocimiento({ nivel, onChange, disabled, etiquetaId }) 
 }
 
 // -----------------------------------------------------------------------------
+// Indicador de progreso (solo en las tres preguntas del onboarding)
+// -----------------------------------------------------------------------------
+const ETAPAS = Object.freeze([
+  Object.freeze({ paso: PASOS.TIPOS, etiqueta: "Tipos de vino" }),
+  Object.freeze({ paso: PASOS.VARIEDADES, etiqueta: "Variedades" }),
+  Object.freeze({ paso: PASOS.CONOCIMIENTO, etiqueta: "Relación con el vino" }),
+]);
+
+function Progreso({ paso }) {
+  const i = ETAPAS.findIndex((e) => e.paso === paso);
+  if (i < 0) return null;
+  return (
+    <div className="onb-prog" data-progreso={i + 1}>
+      <p className="onb-prog-txt">
+        {TEXTOS.progreso(i + 1, ETAPAS.length)}
+        <span className="onb-prog-actual"> · {ETAPAS[i].etiqueta}</span>
+      </p>
+      <ol className="onb-prog-barra" aria-hidden="true">
+        {ETAPAS.map((e, k) => (
+          <li key={e.paso} data-estado={k < i ? "hecho" : k === i ? "actual" : "pendiente"}>
+            <span className="onb-prog-seg" />
+            <span className="onb-prog-etq">{e.etiqueta}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+// Adorno de bienvenida y cierre: la copa de la marca (mismo ícono que usa
+// App.jsx) entre dos filetes dorados. Decorativo.
+function Adorno() {
+  return (
+    <div className="onb-adorno" aria-hidden="true" data-adorno>
+      <span className="onb-adorno-linea" />
+      <Wine size={26} strokeWidth={1.3} />
+      <span className="onb-adorno-linea" />
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
 // Onboarding (cinco pantallas)
 // -----------------------------------------------------------------------------
 // onSalir({ preferencias, confirmado }) se llama al terminar o al omitir.
@@ -256,6 +359,9 @@ export function Onboarding({ client, userId, preferencias, pasoInicial = PASOS.B
   const [selTipos, setSelTipos] = useState(() => seleccionTiposDesdePreferencias(preferencias));
   const [variedades, setVariedades] = useState(() => [...(preferencias?.variedades || [])]);
   const [nivel, setNivel] = useState(preferencias?.nivel ?? null);
+  // Catálogo de variedades expandido o reducido: solo interfaz, se conserva
+  // al avanzar y volver con «Atrás» mientras dura el onboarding.
+  const [variedadesExpandido, setVariedadesExpandido] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [saliendo, setSaliendo] = useState(false);
   const [error, setError] = useState(null);
@@ -374,8 +480,11 @@ export function Onboarding({ client, userId, preferencias, pasoInicial = PASOS.B
           <span className="onb-marca">Mi Cava</span>
         </div>
 
+        {enPregunta && <Progreso paso={paso} />}
+
         {paso === PASOS.BIENVENIDA && (
           <div className="onb-centro">
+            <Adorno />
             {titulo(TEXTOS.bienvenidaTitulo)}
             <p className="onb-sub">{TEXTOS.bienvenidaSubtitulo}</p>
             {pie(TEXTOS.empezar, empezar)}
@@ -401,6 +510,8 @@ export function Onboarding({ client, userId, preferencias, pasoInicial = PASOS.B
               onChange={setVariedades}
               disabled={ocupado}
               etiquetaId="onb-titulo"
+              expandido={variedadesExpandido}
+              onExpandidoChange={setVariedadesExpandido}
             />
             {pie(TEXTOS.continuar, continuarVariedades)}
           </>
@@ -417,6 +528,7 @@ export function Onboarding({ client, userId, preferencias, pasoInicial = PASOS.B
 
         {paso === PASOS.CIERRE && (
           <div className="onb-centro">
+            <Adorno />
             {titulo(TEXTOS.cierreTitulo)}
             <p className="onb-sub">{TEXTOS.cierreTexto}</p>
             {pie(TEXTOS.irACava, () => onSalir({ preferencias: prefs, confirmado: true }))}

@@ -88,10 +88,14 @@ test("normalizarVariedades: sin texto libre, sin duplicados, conserva orden", ()
   assert.equal(normalizarVariedades([""]).ok, false);
 });
 
-test("niveles: tres valores del CHECK de 7.1 y descripción de principiante", () => {
+test("niveles: tres valores del CHECK de 7.1, etiquetas y una descripción para cada uno", () => {
   assert.deepEqual(NIVELES_CONOCIMIENTO.map((n) => n.id), ["beginner", "intermediate", "advanced"]);
   assert.deepEqual(NIVELES_CONOCIMIENTO.map((n) => n.etiqueta), ["Estoy empezando", "Me gusta el vino", "Conozco bastante"]);
-  assert.equal(NIVELES_CONOCIMIENTO[0].descripcion, "Todavía estoy conociendo los distintos vinos");
+  assert.deepEqual(NIVELES_CONOCIMIENTO.map((n) => n.descripcion), [
+    "Todavía estoy descubriendo el mundo del vino.",
+    "Disfruto probar distintos vinos y conocer un poco más.",
+    "Conozco variedades, estilos y tengo mis preferencias.",
+  ]);
 });
 
 test("vista inicial = seis sugerencias + elegidas que no están entre ellas, sin duplicados", () => {

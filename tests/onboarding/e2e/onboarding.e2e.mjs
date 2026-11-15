@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { organizarVariedades, VARIEDADES } from "../../../src/onboarding/catalogo.js";
+import { organizarVariedades, VARIEDADES, NIVELES_CONOCIMIENTO } from "../../../src/onboarding/catalogo.js";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_CORE || "playwright-core");
 const APP = process.env.APP_URL;
@@ -23,6 +23,7 @@ const U = {
   nuevo: "00000000-0000-0000-0000-000000000e01",
   nuevo2: "00000000-0000-0000-0000-000000000e02",
   nuevo3: "00000000-0000-0000-0000-000000000e03",
+  nuevo4: "00000000-0000-0000-0000-000000000e04", // J (ajustes de UX)
   existente: "00000000-0000-0000-0000-000000000e10",
   empezado: "00000000-0000-0000-0000-000000000e11",
   existente2: "00000000-0000-0000-0000-000000000e12",
@@ -41,7 +42,14 @@ const T = {
   conocimiento: "¿Cómo es tu relación con el vino?",
   cierre: "Listo. Ya nos conocemos un poco mejor",
   errorGuardar: "No pudimos guardar tus respuestas. Revisá tu conexión y probá de nuevo.",
+  verMas: "Ver más variedades",
+  verMenos: "Ver menos variedades",
 };
+const DESCRIPCIONES = [
+  "Todavía estoy descubriendo el mundo del vino.",
+  "Disfruto probar distintos vinos y conocer un poco más.",
+  "Conozco variedades, estilos y tengo mis preferencias.",
+];
 
 function b64(o) {
   return Buffer.from(JSON.stringify(o)).toString("base64url");
@@ -115,6 +123,20 @@ async function sinDesborde(page, etiqueta) {
   const { sw, iw } = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth }));
   assert.ok(sw <= iw, `${etiqueta}: desborde horizontal (${sw} > ${iw})`);
 }
+// Ajustes de UX 7.2-B: check, progreso, adorno, «Ver más / Ver menos».
+const alternarVariedades = (page) => page.locator('[data-accion="alternar-variedades"]');
+const expandidoVariedades = async (page) => (await page.locator('[data-pregunta="variedades"]').getAttribute("data-expandido")) === "si";
+async function checkVisible(loc) {
+  return loc.locator(".onb-card-check").evaluate((e) => Number(getComputedStyle(e).opacity) > 0.99);
+}
+async function checkOculto(loc) {
+  return loc.locator(".onb-card-check").evaluate((e) => Number(getComputedStyle(e).opacity) < 0.01);
+}
+async function progreso(page) {
+  const p = page.locator("[data-progreso]");
+  if ((await p.count()) === 0) return null;
+  return { n: Number(await p.getAttribute("data-progreso")), texto: (await p.locator(".onb-prog-txt").innerText()).trim() };
+}
 async function crearPerfil(page, nombre) {
   await page.getByPlaceholder("Tu nombre").fill(nombre);
   await page.getByRole("button", { name: "Continuar" }).click();
@@ -139,6 +161,9 @@ test("B. usuario nuevo (escritorio): recorrido completo, prioridad, Atrás, pers
   await page.getByText(T.sub).waitFor();
   assert.equal(await page.getByText("Entraste como").count(), 0);
   assert.equal(await omitir(page).innerText(), "Ahora no, ir a mi cava");
+  assert.equal(await page.locator("[data-adorno]").count(), 1, "adorno en la bienvenida");
+  assert.equal(await page.locator("[data-adorno]").getAttribute("aria-hidden"), "true");
+  assert.equal(await progreso(page), null, "sin progreso en la bienvenida");
   await foto(page, "escritorio-1-bienvenida");
   await primaria(page).click();
 
@@ -146,6 +171,8 @@ test("B. usuario nuevo (escritorio): recorrido completo, prioridad, Atrás, pers
   await paso(page, 1).waitFor();
   await page.getByRole("heading", { name: T.tipos }).waitFor();
   assert.equal((await fila(U.nuevo)).onboarding_status, "started");
+  assert.deepEqual(await progreso(page), { n: 1, texto: "Paso 1 de 3" }, "escritorio: progreso sin sufijo (etiquetas bajo los segmentos)");
+  assert.equal(await page.locator(".onb-prog-etq").first().isVisible(), true);
   for (const t of ["Tinto", "Blanco", "Rosado", "Naranjo", "Espumoso"]) {
     await page.locator('[data-pregunta="tipos"] .onb-card', { hasText: t }).first().waitFor();
   }
@@ -159,6 +186,11 @@ test("B. usuario nuevo (escritorio): recorrido completo, prioridad, Atrás, pers
   assert.ok(!(await presionada(tarjeta(page, "tipos", "probar_todo"))), "y «Me gusta probar de todo»");
   await tarjeta(page, "tipos", "espumoso").click();
   assert.ok(!(await presionada(tarjeta(page, "tipos", "sin_preferencia"))));
+  await page.waitForTimeout(350);
+  assert.ok(await checkVisible(tarjeta(page, "tipos", "espumoso")), "check en la elegida");
+  assert.ok(await checkOculto(tarjeta(page, "tipos", "tinto")), "sin check en las no elegidas");
+  const trans = await tarjeta(page, "tipos", "tinto").evaluate((e) => getComputedStyle(e).transitionDuration);
+  assert.ok(trans.split(",").every((d) => parseFloat(d) > 0 && parseFloat(d) <= 0.2), `transiciones breves (${trans})`);
   await foto(page, "escritorio-2-tipos");
   await primaria(page).click();
 
@@ -173,12 +205,27 @@ test("B. usuario nuevo (escritorio): recorrido completo, prioridad, Atrás, pers
   await tarjeta(page, "variedades", "chardonnay").click();
   await tarjeta(page, "variedades", "malbec").click();
   assert.deepEqual(await idsVariedades(page), esperadas, "marcar no mueve las tarjetas");
-  await page.getByRole("button", { name: "Ver más variedades" }).click();
+  assert.deepEqual(await progreso(page), { n: 2, texto: "Paso 2 de 3" });
+  assert.equal(await expandidoVariedades(page), false, "primera vez: catálogo reducido");
+  assert.equal(await alternarVariedades(page).getAttribute("aria-expanded"), "false");
+  await foto(page, "escritorio-3-variedades-reducida");
+  await page.getByRole("button", { name: T.verMas }).click();
   const todas = await idsVariedades(page);
   assert.equal(todas.length, VARIEDADES.length, "ninguna excluida");
   assert.deepEqual(todas.slice(0, 2), ["chardonnay", "malbec"], "elegidas agrupadas primero al ampliar");
+  assert.equal(await alternarVariedades(page).innerText(), T.verMenos);
+  assert.equal(await alternarVariedades(page).getAttribute("aria-expanded"), "true");
   await tarjeta(page, "variedades", "tannat").click();
+  assert.deepEqual(await idsVariedades(page), todas, "marcar en el catálogo completo no mueve las tarjetas");
   await foto(page, "escritorio-3-variedades-ampliada");
+  // Ver menos: la elegida del catálogo completo sigue visible, agrupada arriba
+  await alternarVariedades(page).click();
+  assert.equal(await expandidoVariedades(page), false);
+  const contraida = await idsVariedades(page);
+  assert.deepEqual(contraida, ["chardonnay", "malbec", "tannat", ...esperadas.filter((id) => !["chardonnay", "malbec"].includes(id))]);
+  for (const id of ["chardonnay", "malbec", "tannat"]) assert.ok(await presionada(tarjeta(page, "variedades", id)), `${id} sigue elegida al contraer`);
+  assert.equal(await page.evaluate(() => document.activeElement?.dataset?.accion), "alternar-variedades", "el foco queda en el control");
+  assert.equal(await alternarVariedades(page).innerText(), T.verMas);
 
   // Atrás conserva; cambiar tipos no borra variedades
   await atras(page).click();
@@ -193,6 +240,18 @@ test("B. usuario nuevo (escritorio): recorrido completo, prioridad, Atrás, pers
   const seisTintoEsp = organizarVariedades({ tipos: ["tinto", "espumoso"] }).sugeridas.map((v) => v.id);
   const elegidas = ["chardonnay", "malbec", "tannat"];
   assert.deepEqual(tras, [...elegidas, ...seisTintoEsp.filter((id) => !elegidas.includes(id))], "seis + elegidas fuera de ellas");
+  assert.equal(await expandidoVariedades(page), false, "estaba contraído: vuelve contraído");
+  // Expandido → avanzar → Atrás: vuelve expandido (solo estado de interfaz)
+  await alternarVariedades(page).click();
+  assert.equal((await idsVariedades(page)).length, VARIEDADES.length);
+  await primaria(page).click();
+  await paso(page, 3).waitFor();
+  await atras(page).click();
+  await paso(page, 2).waitFor();
+  assert.equal(await expandidoVariedades(page), true, "estaba expandido: vuelve expandido");
+  assert.equal((await idsVariedades(page)).length, VARIEDADES.length);
+  assert.deepEqual((await idsVariedades(page)).slice(0, 3), elegidas);
+  for (const id of elegidas) assert.ok(await presionada(tarjeta(page, "variedades", id)), id);
   await primaria(page).click();
 
   // 4. Conocimiento
@@ -200,8 +259,14 @@ test("B. usuario nuevo (escritorio): recorrido completo, prioridad, Atrás, pers
   f = await fila(U.nuevo);
   assert.deepEqual(f.preferred_grapes, ["chardonnay", "malbec", "tannat"]);
   assert.deepEqual(f.preferred_wine_types, ["tinto", "espumoso"]);
-  await page.getByText("Todavía estoy conociendo los distintos vinos").waitFor();
-  for (const t of ["Estoy empezando", "Me gusta el vino", "Conozco bastante"]) await page.getByText(t, { exact: true }).waitFor();
+  assert.deepEqual(await progreso(page), { n: 3, texto: "Paso 3 de 3" });
+  for (const [i, n] of NIVELES_CONOCIMIENTO.entries()) {
+    const card = tarjeta(page, "conocimiento", n.id);
+    assert.equal((await card.locator(".onb-card-titulo").innerText()).trim(), ["Estoy empezando", "Me gusta el vino", "Conozco bastante"][i]);
+    assert.equal((await card.locator(".onb-card-desc").innerText()).trim(), DESCRIPCIONES[i]);
+  }
+  const alturas = await page.locator('[data-pregunta="conocimiento"] .onb-card').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
+  assert.ok(Math.max(...alturas) - Math.min(...alturas) <= 2, `tres tarjetas con tratamiento consistente (${alturas})`);
   await tarjeta(page, "conocimiento", "beginner").click();
   await foto(page, "escritorio-4-conocimiento");
   await primaria(page).click();
@@ -212,6 +277,8 @@ test("B. usuario nuevo (escritorio): recorrido completo, prioridad, Atrás, pers
   await page.getByText(/favoritos.*puntuaciones.*experiencias/).waitFor();
   assert.equal(await omitir(page).count(), 0);
   assert.equal(await atras(page).count(), 0);
+  assert.equal(await page.locator("[data-adorno]").count(), 1, "adorno en el cierre");
+  assert.equal(await progreso(page), null, "sin progreso en el cierre");
   f = await fila(U.nuevo);
   assert.equal(f.onboarding_status, "completed");
   assert.equal(f.knowledge_level, "beginner");
@@ -368,6 +435,20 @@ test("F. edición posterior en «Mis preferencias» sin alterar completed", asyn
   assert.ok(await presionada(tarjeta(page, "tipos", "tinto")));
   assert.ok(await presionada(tarjeta(page, "variedades", "malbec")));
   assert.ok(await presionada(tarjeta(page, "conocimiento", "intermediate")));
+  assert.equal(await progreso(page), null, "«Mis preferencias» no muestra el progreso");
+  for (const [i, n] of NIVELES_CONOCIMIENTO.entries()) {
+    assert.equal((await tarjeta(page, "conocimiento", n.id).locator(".onb-card-desc").innerText()).trim(), DESCRIPCIONES[i]);
+  }
+  await page.waitForTimeout(350);
+  assert.ok(await checkVisible(tarjeta(page, "variedades", "malbec")));
+  // Ver más / Ver menos dentro del modal, sin perder la selección
+  assert.equal(await expandidoVariedades(page), false);
+  await alternarVariedades(page).click();
+  assert.equal((await idsVariedades(page)).length, VARIEDADES.length);
+  await alternarVariedades(page).click();
+  assert.equal(await expandidoVariedades(page), false);
+  assert.equal((await idsVariedades(page))[0], "malbec");
+  assert.ok(await presionada(tarjeta(page, "variedades", "malbec")));
 
   // Cancelar no escribe
   const parches = [];
@@ -606,6 +687,17 @@ test("I. «Mis preferencias» en celular: desplazamiento táctil, selección y C
     assert.equal(new Set(ids).size, ids.length);
     await tarjeta(page, "variedades", ids[ids.length - 1]).tap();
     assert.ok(await presionada(tarjeta(page, "variedades", ids[ids.length - 1])));
+    // Ver menos: la última elegida sigue visible arriba y el control queda a la vista
+    await page.getByRole("button", { name: T.verMenos }).tap();
+    const red = await idsVariedades(page);
+    assert.ok(red.includes(ids[ids.length - 1]), `${pant.nombre}: la elegida sigue visible al contraer`);
+    assert.ok(red.length < ids.length);
+    const enVista = await alternarVariedades(page).evaluate((b) => {
+      const r = b.getBoundingClientRect(); const c = b.closest(".onb-modal-cuerpo").getBoundingClientRect();
+      return r.top >= c.top - 1 && r.bottom <= c.bottom + 1;
+    });
+    assert.ok(enVista, `${pant.nombre}: «Ver más» a la vista tras contraer`);
+    await page.getByRole("button", { name: T.verMas }).tap();
     for (const acc of ["cancelar", "guardar"]) {
       const r = await botonVisibleYTocable(page, acc);
       assert.ok(r.ok, `${pant.nombre}: ${acc} tras ampliar ${JSON.stringify(r)}`);
@@ -630,4 +722,95 @@ test("I. «Mis preferencias» en celular: desplazamiento táctil, selección y C
     assert.deepEqual(errores, []);
     await context.close();
   }
+});
+
+// -----------------------------------------------------------------------------
+// J. Ajustes de UX (celular 360 px, movimiento reducido): progreso, check con
+//    nombres largos, Ver más / Ver menos, teclado y capturas.
+// -----------------------------------------------------------------------------
+test("J. celular 360 px con movimiento reducido: progreso, check, Ver menos y teclado", async () => {
+  const CEL360 = { viewport: { width: 360, height: 740 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, reducedMotion: "reduce" };
+  const { context, page, errores } = await abrir(U.nuevo4, CEL360);
+  await crearPerfil(page, "Iris Nueva");
+  await paso(page, 0).waitFor();
+  assert.equal(await page.locator("[data-adorno]").count(), 1);
+  await sinDesborde(page, "bienvenida 360");
+  await foto(page, "celular360-1-bienvenida");
+  await primaria(page).tap();
+
+  // Tipos: progreso con sufijo en móvil; sin transiciones con movimiento reducido
+  await paso(page, 1).waitFor();
+  assert.deepEqual(await progreso(page), { n: 1, texto: "Paso 1 de 3 · Tipos de vino" });
+  assert.equal(await page.locator(".onb-prog-etq").first().isVisible(), false, "móvil: sin etiquetas bajo los segmentos");
+  const trans = await tarjeta(page, "tipos", "tinto").evaluate((e) => getComputedStyle(e).transitionDuration);
+  assert.ok(trans.split(",").every((d) => parseFloat(d) === 0), `movimiento reducido: sin transiciones (${trans})`);
+  // Teclado: desde el título, Tab llega a la primera tarjeta con foco visible; Espacio la marca
+  await page.locator("#onb-titulo").focus();
+  await page.keyboard.press("Tab");
+  const foco = await page.evaluate(() => {
+    const a = document.activeElement;
+    return { id: a?.dataset?.id, visible: a?.matches(":focus-visible"), outline: getComputedStyle(a).outlineStyle };
+  });
+  assert.deepEqual(foco, { id: "tinto", visible: true, outline: "solid" });
+  await page.keyboard.press("Space");
+  assert.ok(await presionada(tarjeta(page, "tipos", "tinto")));
+  assert.ok(await checkVisible(tarjeta(page, "tipos", "tinto")), "check sin animación pero visible");
+  await sinDesborde(page, "tipos 360");
+  await foto(page, "celular360-2-tipos");
+  await primaria(page).tap();
+
+  // Variedades
+  await paso(page, 2).waitFor();
+  assert.deepEqual(await progreso(page), { n: 2, texto: "Paso 2 de 3 · Variedades" });
+  assert.equal(await expandidoVariedades(page), false);
+  await foto(page, "celular360-3-variedades-reducida");
+  await alternarVariedades(page).tap();
+  await tarjeta(page, "variedades", "pinot_gris").tap();
+  await tarjeta(page, "variedades", "gewurztraminer").tap();
+  // El check no se superpone con nombres largos
+  for (const id of ["pinot_gris", "gewurztraminer"]) {
+    const r = await tarjeta(page, "variedades", id).evaluate((b) => {
+      const t = b.querySelector(".onb-card-titulo").getBoundingClientRect();
+      const c = b.querySelector(".onb-card-check").getBoundingClientRect();
+      const rango = document.createRange(); rango.selectNodeContents(b.querySelector(".onb-card-titulo"));
+      const texto = [...rango.getClientRects()].reduce((m, x) => Math.max(m, x.right), 0);
+      return { titulo: t.right, texto, check: c.left, ancho: c.width };
+    });
+    assert.ok(r.texto <= r.check, `${id}: el texto no queda debajo del check ${JSON.stringify(r)}`);
+    assert.ok(r.ancho <= 16, `${id}: check pequeño (${r.ancho}px)`);
+  }
+  await sinDesborde(page, "variedades ampliadas 360");
+  await foto(page, "celular360-4-variedades-ampliada");
+  await alternarVariedades(page).tap();
+  const red = await idsVariedades(page);
+  assert.deepEqual(red.slice(0, 2), ["pinot_gris", "gewurztraminer"], "elegidas agrupadas arriba al contraer");
+  const enVista = await alternarVariedades(page).evaluate((b) => {
+    const r = b.getBoundingClientRect();
+    return r.top >= 0 && r.bottom <= window.innerHeight;
+  });
+  assert.ok(enVista, "«Ver más» a la vista tras contraer");
+  await foto(page, "celular360-5-variedades-contraida");
+  await primaria(page).tap();
+
+  // Conocimiento
+  await paso(page, 3).waitFor();
+  assert.deepEqual(await progreso(page), { n: 3, texto: "Paso 3 de 3 · Relación con el vino" });
+  for (const d of DESCRIPCIONES) await page.getByText(d, { exact: true }).waitFor();
+  await tarjeta(page, "conocimiento", "advanced").tap();
+  await sinDesborde(page, "conocimiento 360");
+  await foto(page, "celular360-6-conocimiento");
+  await primaria(page).tap();
+
+  // Cierre
+  await paso(page, 4).waitFor();
+  assert.equal(await page.locator("[data-adorno]").count(), 1);
+  assert.equal(await progreso(page), null);
+  await foto(page, "celular360-7-cierre");
+  const f = await fila(U.nuevo4);
+  assert.deepEqual(f.preferred_wine_types, ["tinto"]);
+  assert.deepEqual(f.preferred_grapes, ["pinot_gris", "gewurztraminer"]);
+  assert.equal(f.knowledge_level, "advanced");
+  assert.equal(f.onboarding_status, "completed");
+  assert.deepEqual(errores, []);
+  await context.close();
 });

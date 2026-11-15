@@ -3,6 +3,7 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-000000000e01', 'nuevo@test.local'),
   ('00000000-0000-0000-0000-000000000e02', 'nuevo2@test.local'),
   ('00000000-0000-0000-0000-000000000e03', 'nuevo3@test.local'),
+  ('00000000-0000-0000-0000-000000000e04', 'nuevo4@test.local'),
   ('00000000-0000-0000-0000-000000000e10', 'existente@test.local'),
   ('00000000-0000-0000-0000-000000000e11', 'empezado@test.local'),
   ('00000000-0000-0000-0000-000000000e12', 'existente2@test.local'),
@@ -11,7 +12,7 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-000000000e40', 'errores@test.local'),
   ('00000000-0000-0000-0000-000000000e50', 'mezcla@test.local'),
   ('00000000-0000-0000-0000-000000000e60', 'celular@test.local');
--- e01..e03 sin perfil: pasan por ProfileSetup (usuarios nuevos)
+-- e01..e04 sin perfil: pasan por ProfileSetup (usuarios nuevos)
 insert into public.profiles (id, nombre, role) values
   ('00000000-0000-0000-0000-000000000e10', 'Ana Existente', 'editor'),
   ('00000000-0000-0000-0000-000000000e11', 'Beto Empezado', 'editor'),

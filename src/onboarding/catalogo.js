@@ -167,9 +167,9 @@ export function organizarVariedades({ tipos = [], seleccionadas = [], visibles =
 }
 
 export const NIVELES_CONOCIMIENTO = Object.freeze([
-  Object.freeze({ id: "beginner", etiqueta: "Estoy empezando", descripcion: "Todavía estoy conociendo los distintos vinos" }),
-  Object.freeze({ id: "intermediate", etiqueta: "Me gusta el vino" }),
-  Object.freeze({ id: "advanced", etiqueta: "Conozco bastante" }),
+  Object.freeze({ id: "beginner", etiqueta: "Estoy empezando", descripcion: "Todavía estoy descubriendo el mundo del vino." }),
+  Object.freeze({ id: "intermediate", etiqueta: "Me gusta el vino", descripcion: "Disfruto probar distintos vinos y conocer un poco más." }),
+  Object.freeze({ id: "advanced", etiqueta: "Conozco bastante", descripcion: "Conozco variedades, estilos y tengo mis preferencias." }),
 ]);
 
 export const IDS_NIVELES = Object.freeze(NIVELES_CONOCIMIENTO.map((n) => n.id));

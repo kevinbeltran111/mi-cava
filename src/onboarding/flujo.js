@@ -4,7 +4,7 @@
 // =============================================================================
 
 import { CARGA, RESPUESTA_TIPOS, debeMostrarOnboarding } from "./preferencias.js";
-import { IDS_TIPOS_VINO } from "./catalogo.js";
+import { IDS_TIPOS_VINO, organizarVariedades } from "./catalogo.js";
 
 // Roles con cava propia (mismo criterio que hasCava en App.jsx).
 export function rolConCava(rol) {
@@ -80,6 +80,22 @@ export function tiposParaPriorizar(sel) {
 
 export function alternarEnLista(lista, id) {
   return lista.includes(id) ? lista.filter((x) => x !== id) : [...lista, id];
+}
+
+// Pregunta de variedades: tarjetas visibles en modo reducido o completo.
+// No agrega reglas: usa organizarVariedades tal cual (elegidas agrupadas
+// primero, luego sugeridas por prioridad de los tipos y, si está expandido,
+// el resto). Contraer nunca oculta una elegida: sigue en su grupo.
+// La interfaz la recalcula al mostrar la pregunta, al cambiar los tipos y al
+// expandir o contraer; nunca al marcar una tarjeta (ver PreguntaVariedades).
+//   hayAlternancia  si corresponde mostrar «Ver más / Ver menos variedades».
+// `expandido` es solo estado de interfaz: no se guarda en Supabase.
+export function variedadesVisibles({ tipos = [], seleccionadas = [], expandido = false } = {}) {
+  const o = organizarVariedades({ tipos, seleccionadas });
+  return {
+    visibles: [...o.seleccionadas, ...o.sugeridas, ...(expandido ? o.resto : [])],
+    hayAlternancia: expandido || o.resto.length > 0,
+  };
 }
 
 // Pregunta de conocimiento: elegir de nuevo la opción marcada la desmarca

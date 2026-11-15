@@ -5,8 +5,10 @@ import {
   decidirOnboarding, rolConCava, SELECCION_TIPOS_VACIA, seleccionTiposDesdePreferencias,
   alternarTipo, alternarExploracion, alternarSinPreferencia, respuestaTipos, tiposParaPriorizar,
   alternarEnLista, alternarNivel, cambiosEdicion, lecturaConTiempoLimite, escrituraConTiempoLimite,
+  variedadesVisibles,
 } from "../../src/onboarding/flujo.js";
 import { CARGA } from "../../src/onboarding/preferencias.js";
+import { VARIEDADES, organizarVariedades } from "../../src/onboarding/catalogo.js";
 
 const L = (carga, estado) => ({ carga, preferencias: estado ? { estado } : null });
 
@@ -93,4 +95,75 @@ test("tiempo límite: lectura → ERROR de conexión; escritura → ok:false (nu
   assert.equal(e.ok, false);
   const rapido = await lecturaConTiempoLimite(Promise.resolve({ carga: CARGA.SIN_REGISTRO }), 1000);
   assert.equal(rapido.carga, CARGA.SIN_REGISTRO);
+});
+
+// -----------------------------------------------------------------------------
+// Variedades: modo reducido / completo («Ver más» / «Ver menos variedades»)
+// -----------------------------------------------------------------------------
+const ids = (r) => r.visibles.map((v) => v.id);
+const COMBOS_TIPOS = [[], ["tinto"], ["espumoso"], ["blanco", "naranjo"], ["tinto", "espumoso"], ["rosado"]];
+
+test("variedades: reducido = elegidas + seis sugeridas; completo = catálogo entero, sin duplicados", () => {
+  for (const tipos of COMBOS_TIPOS) {
+    for (const sel of [[], ["glera"], ["malbec", "tannat"], ["torrontes", "glera", "riesling"]]) {
+      const o = organizarVariedades({ tipos, seleccionadas: sel });
+      const red = variedadesVisibles({ tipos, seleccionadas: sel, expandido: false });
+      const comp = variedadesVisibles({ tipos, seleccionadas: sel, expandido: true });
+      assert.deepEqual(ids(red), [...o.seleccionadas, ...o.sugeridas].map((v) => v.id), `${tipos}/${sel}: mismo criterio que organizarVariedades`);
+      assert.deepEqual(ids(comp), [...o.seleccionadas, ...o.sugeridas, ...o.resto].map((v) => v.id));
+      assert.equal(new Set(ids(red)).size, ids(red).length);
+      assert.equal(new Set(ids(comp)).size, ids(comp).length);
+      assert.deepEqual([...ids(comp)].sort(), VARIEDADES.map((v) => v.id).sort(), "ninguna excluida");
+      assert.deepEqual(ids(red).slice(0, sel.length), sel, "elegidas agrupadas primero (reducido)");
+      assert.deepEqual(ids(comp).slice(0, sel.length), sel, "elegidas agrupadas primero (completo)");
+      assert.ok(red.hayAlternancia && comp.hayAlternancia);
+    }
+  }
+});
+
+test("variedades: expandir, elegir del resto, contraer y volver a expandir no pierde ni oculta selecciones", () => {
+  const tipos = ["espumoso"];
+  let sel = [];
+  let expandido = false;
+  const vista = () => variedadesVisibles({ tipos, seleccionadas: sel, expandido });
+  const seis = ids(vista());
+  sel = alternarEnLista(sel, seis[0]);
+  expandido = true; // Ver más
+  const resto = ids(vista()).filter((id) => !seis.includes(id));
+  sel = alternarEnLista(sel, resto[resto.length - 1]); // la última del catálogo completo
+  sel = alternarEnLista(sel, resto[0]);
+  expandido = false; // Ver menos
+  const red = ids(vista());
+  assert.deepEqual(red.slice(0, 3), sel, "las tres elegidas siguen visibles y agrupadas al contraer");
+  for (const id of sel) assert.ok(red.includes(id), id);
+  assert.equal(red.length, sel.length + seis.filter((id) => !sel.includes(id)).length);
+  expandido = true; // Ver más otra vez
+  assert.deepEqual(ids(vista()).slice(0, 3), sel);
+  assert.deepEqual(sel.length, 3, "alternar el catálogo no modifica la selección");
+});
+
+test("variedades: el modo no cambia la priorización por tipos ni el orden de las sugeridas", () => {
+  for (const tipos of COMBOS_TIPOS) {
+    const sug = organizarVariedades({ tipos }).sugeridas.map((v) => v.id);
+    assert.deepEqual(ids(variedadesVisibles({ tipos, expandido: false })), sug);
+    assert.deepEqual(ids(variedadesVisibles({ tipos, expandido: true })).slice(0, 6), sug);
+  }
+  // Mismos datos → mismo orden (no hay aleatoriedad ni dependencia del historial)
+  const a = variedadesVisibles({ tipos: ["tinto"], seleccionadas: ["glera"], expandido: true });
+  const b = variedadesVisibles({ tipos: ["tinto"], seleccionadas: ["glera"], expandido: true });
+  assert.deepEqual(ids(a), ids(b));
+});
+
+test("variedades: alternancia visible solo si hay algo más que mostrar o el catálogo está expandido", () => {
+  const todas = VARIEDADES.map((v) => v.id);
+  assert.equal(variedadesVisibles({ seleccionadas: todas, expandido: false }).hayAlternancia, false, "todo elegido: nada que ampliar");
+  assert.equal(variedadesVisibles({ seleccionadas: todas, expandido: true }).hayAlternancia, true, "expandido: siempre se puede contraer");
+  assert.equal(ids(variedadesVisibles({ seleccionadas: todas })).length, todas.length);
+});
+
+test("variedades: un id fuera del catálogo se conserva y se muestra en ambos modos", () => {
+  for (const expandido of [false, true]) {
+    const r = variedadesVisibles({ seleccionadas: ["variedad_retirada", "malbec"], expandido });
+    assert.deepEqual(ids(r).slice(0, 2), ["variedad_retirada", "malbec"]);
+  }
 });
