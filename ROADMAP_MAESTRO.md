@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 2.1 — primera conciliación histórica · **Fecha de corte:** 2026-11-15 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 2.2 — segunda conciliación documental · **Fecha de corte:** 2026-11-15 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -14,7 +14,7 @@ Mi Cava es una biblioteca personal de vinos, no solo un inventario. Permite guar
 | UX-20 — Guardar / tener / abrir / probar sin stock | Cerrada y en Producción | 03 / 00 |
 | Etapa 7 — Inteligencia personal | En desarrollo por subetapas; verificar cierres y despliegues específicos | 05 |
 | Etapa 7.1 — Datos de inteligencia | Trabajo de base realizado; contrastar estado final | 05 / 99 |
-| Etapa 7.2 — Onboarding | Validación funcional 7.2-B: 14/14 (15/11/2026); estado de publicación no inferido | 05 |
+| Etapa 7.2 — Onboarding | Desarrollo 7.2-A/B integrado a main en merge f729c2f; validación funcional manual 14/14 informada; Producción no verificada | 05 |
 | UX-21 — Ajustes de vistas | Cerrada; merge en main y cuatro verificaciones de Producción informadas como OK | 03 / 00 |
 | Etapa 8 — Descubrir | Futuro, no autorizado | 00 |
 | Mobile — Android / iOS | Objetivo estratégico, ejecución sin programar | 00 / 99 |
@@ -81,3 +81,16 @@ Auditar conversaciones 02, 03, 04, 05 y 99, contrastar cada PIN con el estado ac
 **Fuentes y límites de esta pasada:** conversaciones y decisiones disponibles en el Proyecto; archivo maestro en esta rama; consulta a issues/PRs del repositorio sin resultados adicionales para la búsqueda efectuada. No se ha inspeccionado exhaustivamente todo el historial de Git ni comprobado manualmente cada pantalla de Producción. Se requiere una segunda pasada sobre artefactos y cierres específicos de los chats 02/03/05/99 antes de declarar el inventario completo.
 
 **Regla de cierre:** el registro de un hito informado como cerrado conserva su fuente (confirmación del usuario). El estado de despliegue de otro hito no se deduce por proximidad de fecha o etapa.
+
+## Conciliación histórica — pasada 2 (15/11/2026)
+**Evidencia adicional de GitHub:**
+- Merge `195aa8c`: UX-21, vistas de biblioteca (tarjetas, cuadrícula compacta, lista compacta); coincide con la confirmación del usuario de las cuatro pruebas en Producción.
+- Commit `b798e41`: 7.2-A, persistencia del onboarding con marca temporal resuelta en PostgreSQL, sin reloj del dispositivo.
+- Commit `4deafef`: 7.2-B, cinco pantallas (bienvenida, tipos, variedades, conocimiento y cierre), invitación discreta y «Mis preferencias»; incluye pruebas E2E.
+- Commit `81ae9ce`: ajustes de 7.2-B, expansión de variedades con selección estable, descripciones de conocimiento, transiciones breves y progreso de tres preguntas.
+- Commit `9bb9064`: corrección de duplicación/séptima variedad sugerida y pruebas adicionales de integración.
+- Merge `f729c2f`: integración de Etapa 7.2 (datos + interfaz) en `main`.
+
+**Regla de interpretación:** merge a `main` no equivale a despliegue de Producción. La publicación de 7.2 requiere confirmación por despliegue y/o pruebas en dominio productivo. Los commits no acreditan por sí solos la resolución de los PINs históricos de Etapa 6. UX-22 se mantiene pendiente aunque 7.2-B ya incluya microtransiciones.
+
+**Conciliación pendiente:** validar estado de UX-P01 a UX-P11 con reportes de cierre y experiencia real; revisar si TECH-01 fue mitigado por la documentación y migraciones nuevas; completar antecedentes jurídicos de 04. No reabrir nada por inferencia.
