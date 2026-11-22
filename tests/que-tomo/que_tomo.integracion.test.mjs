@@ -4,8 +4,9 @@
 // Lo lanza supabase/tests/run_que_tomo_integracion.sh. Sin IT_REST_URL /
 // IT_JWT_SECRET / IT_DB se omite.
 //
-// El motor de 7.3-B NO existe: donde hace falta se inyecta un motor
-// SINTÉTICO de prueba, solo para verificar validación y persistencia.
+// 7.4-B1: el motor vigente es motorCellar («Elegir de mi cava», primera
+// tanda) y se prueba tal cual. Donde hace falta forzar una salida concreta
+// (validación, errores) se inyecta un motor SINTÉTICO.
 // =============================================================================
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -17,6 +18,7 @@ import { crearHandler } from "../../api/que-tomo.js";
 import { construirContexto } from "../../api/_que-tomo/contexto.js";
 import { recuperarCandidatos } from "../../api/_que-tomo/candidatos.js";
 import { validarSalidaMotor } from "../../api/_que-tomo/motor.js";
+import { prepararCellar, explicar } from "../../api/_que-tomo/motor_cellar.js";
 import { crearSesion, registrarItems } from "../../api/_que-tomo/sesiones.js";
 
 const REST = process.env.IT_REST_URL;
@@ -35,6 +37,21 @@ const WX = {
   tomadoSinPuntuar: "a0000000-0000-0000-0000-000000000004",
 };
 const WY = "b0000000-0000-0000-0000-000000000001";
+// 7.4-B1 (ver el final de seed.sql)
+const S = "00000000-0000-0000-0000-0000000074a1";
+const R = "00000000-0000-0000-0000-0000000074b1";
+const O = "00000000-0000-0000-0000-0000000074c1";
+const M = "00000000-0000-0000-0000-0000000074d1";
+const WO = "f4000000-0000-0000-0000-0000000000c1";
+const WM = {
+  favorito: "f4000000-0000-0000-0000-0000000000d1",
+  seisBotellas: "f4000000-0000-0000-0000-0000000000d2",
+  bienPuntuado: "f4000000-0000-0000-0000-0000000000d3",
+  paraExplorar: "f4000000-0000-0000-0000-0000000000d4",
+  excluido: "f4000000-0000-0000-0000-0000000000d5",
+  sinStock: "f4000000-0000-0000-0000-0000000000d6",
+  sinPuntuar: "f4000000-0000-0000-0000-0000000000d7",
+};
 
 // ---------------------------------------------------------------------------
 // JWT HS256 de prueba
@@ -112,7 +129,7 @@ after(() => server?.close());
 // ---------------------------------------------------------------------------
 const sql = (q) => execFileSync("psql", ["-X", "-At", "-v", "ON_ERROR_STOP=1", "-d", DB, "-c", q], { encoding: "utf8" }).trim();
 const sesionesDe = (uid) => Number(sql(`select count(*) from public.recommendation_sessions where user_id = '${uid}'`));
-// Huella de todo lo que 7.3-A no debe modificar.
+// Huella de todo lo que ni 7.3-A ni 7.4-B1 deben modificar.
 const huellaIntegridad = () => sql(`
   select md5(string_agg(t, '|' order by t)) from (
     select 'w:' || md5(string_agg(to_jsonb(w)::text, ',' order by id)) as t from public.wines w
@@ -134,7 +151,7 @@ function handler(deps = {}) {
   });
 }
 
-async function llamar({ token, body = { consulta: "¿Qué tomo con un asado?" }, deps } = {}) {
+async function llamar({ token, body = { modo: "cellar" }, deps } = {}) {
   const res = { codigo: null, cuerpo: null, status(c) { this.codigo = c; return this; }, json(b) { this.cuerpo = b; return this; } };
   const headers = token ? { authorization: `Bearer ${token}` } : {};
   await handler(deps)({ method: "POST", headers, body }, res);
@@ -148,7 +165,7 @@ function motorSintetico(ids, extra = {}) {
   const motor = async (entrada) => {
     llamadas.push(entrada);
     return {
-      modo: "food",
+      modo: "cellar",
       suficiencia: "sufficient",
       contextoSesion: { prueba: true },
       engineVersion: "prueba-7.3-A",
@@ -181,25 +198,42 @@ test("viewer (sin cava) → 403 sin_cava, sin leer su contexto ni crear sesión"
 });
 
 // ---------------------------------------------------------------------------
-// Estado de 7.3-A: sin motor
+// Sin candidatos (7.4-B1): ni motor ni sesión
 // ---------------------------------------------------------------------------
-test("sin motor (7.3-A): 501 motor_pendiente, sin sesión ni recomendaciones simuladas", { skip }, async () => {
-  const r = await llamar({ token: tokenDe(X) });
+test("sin motor configurado: 501 motor_pendiente, sin sesión ni recomendaciones simuladas", { skip }, async () => {
+  const r = await llamar({ token: tokenDe(X), deps: { motor: null } });
   assert.equal(r.codigo, 501);
   assert.equal(r.cuerpo.codigo, "motor_pendiente");
   assert.equal(r.cuerpo.recomendaciones, undefined);
   assert.equal(sesionesDe(X), 0);
 });
 
-test("biblioteca vacía: sin_candidatos, no llama al motor ni crea sesión", { skip }, async () => {
-  const { motor, llamadas } = motorSintetico([]);
-  const r = await llamar({ token: tokenDe(E), deps: { motor } });
-  assert.equal(r.codigo, 200);
-  assert.equal(r.cuerpo.estado, "sin_candidatos");
-  assert.deepEqual(r.cuerpo.recomendaciones, []);
-  assert.equal(llamadas.length, 0);
-  assert.equal(sesionesDe(E), 0);
+test("modos fuera de alcance: food / discovery → 501, sin modo → 400; sin sesión", { skip }, async () => {
+  for (const [body, codigo] of [[{ modo: "food", consulta: "asado" }, 501], [{ modo: "discovery" }, 501], [{ consulta: "¿Qué tomo?" }, 400]]) {
+    const { motor, llamadas } = motorSintetico([WX.favorito]);
+    const r = await llamar({ token: tokenDe(X), body, deps: { motor } });
+    assert.equal(r.codigo, codigo, JSON.stringify(body));
+    assert.equal(llamadas.length, 0);
+  }
+  assert.equal(sesionesDe(X), 0);
 });
+
+for (const [nombre, uid, motivo] of [
+  ["biblioteca vacía", E, "biblioteca_vacia"],
+  ["vinos sin stock", S, "sin_stock"],
+  ["lo disponible está excluido por una restricción confirmada", R, "excluidos_por_restriccion"],
+]) {
+  test(`${nombre}: sin_candidatos ${motivo}, no llama al motor ni crea sesión`, { skip }, async () => {
+    const { motor, llamadas } = motorSintetico([]);
+    const r = await llamar({ token: tokenDe(uid), deps: { motor } });
+    assert.equal(r.codigo, 200);
+    assert.equal(r.cuerpo.estado, "sin_candidatos");
+    assert.equal(r.cuerpo.motivo, motivo);
+    assert.deepEqual(r.cuerpo.recomendaciones, []);
+    assert.equal(llamadas.length, 0);
+    assert.equal(sesionesDe(uid), 0);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Contexto personal y aislamiento (RLS)
@@ -242,10 +276,10 @@ test("RLS: con el token de X no se leen datos de Y aunque se pida su user_id", {
 });
 
 test("el usuario sale del token: un user_id en el cuerpo se ignora", { skip }, async () => {
-  const { motor, llamadas } = motorSintetico([]);
-  const r = await llamar({ token: tokenDe(X), body: { consulta: "algo", userId: Y, user_id: Y }, deps: { motor } });
-  assert.equal(r.codigo, 200);
-  assert.equal(llamadas[0].contexto.usuarioId, X);
+  const { motor, llamadas } = motorSintetico([WX.favorito]);
+  const r = await llamar({ token: tokenDe(X), body: { modo: "cellar", consulta: "algo", userId: Y, user_id: Y }, deps: { motor } });
+  assert.equal(r.codigo, 200, JSON.stringify(r.cuerpo));
+  assert.deepEqual(llamadas[0].candidatos.map((c) => c.wineId).sort(), [WX.favorito, WX.stockSinTomar].sort());
   assert.equal(JSON.stringify(llamadas[0]).includes(WY), false);
   assert.equal(sql(`select user_id from public.recommendation_sessions where id = '${r.cuerpo.sesionId}'`), X);
 });
@@ -271,39 +305,50 @@ test("fallo al leer el contexto → 503 contexto_no_disponible, sin motor ni ses
 // ---------------------------------------------------------------------------
 // Circuito completo con motor sintético
 // ---------------------------------------------------------------------------
-test("persistencia: sesión e items reales, identidad desde la base, disponible vs consumido", { skip }, async () => {
-  const { motor, llamadas } = motorSintetico([WX.stockSinTomar, WX.tomadoMal]);
-  const r = await llamar({ token: tokenDe(X), body: { consulta: "  ¿Qué tomo con pescado?  " }, deps: { motor } });
+test("motor sintético: sesión e items reales, identidad desde la base, consulta opcional guardada", { skip }, async () => {
+  const { motor, llamadas } = motorSintetico([WX.stockSinTomar, WX.favorito]);
+  const r = await llamar({ token: tokenDe(X), body: { modo: "cellar", consulta: "  algo para hoy  " }, deps: { motor } });
   assert.equal(r.codigo, 200, JSON.stringify(r.cuerpo));
   assert.equal(r.cuerpo.estado, "ok");
-  assert.equal(llamadas[0].consulta, "¿Qué tomo con pescado?");
-  assert.equal(llamadas[0].candidatos.length, 4);
+  assert.equal(r.cuerpo.tanda, 1);
+  assert.equal(llamadas[0].consulta, "algo para hoy");
+  // 7.4-B1: el motor recibe solo los elegibles (stock > 0), no toda la biblioteca.
+  assert.equal(llamadas[0].candidatos.length, 2);
+  assert.equal(llamadas[0].contexto, undefined);
 
   const [a, b] = r.cuerpo.recomendaciones;
-  assert.deepEqual([a.posicion, a.wineId, a.vino.nombre, a.disponible, a.stock, a.consumidoAntes, a.favorito],
-    [1, WX.stockSinTomar, "X Stock sin tomar", true, 6, false, false]);
-  assert.deepEqual([b.posicion, b.wineId, b.disponible, b.consumidoAntes, b.vecesConsumido],
-    [2, WX.tomadoMal, false, true, 2]);
+  assert.deepEqual([a.posicion, a.rol, a.wineId, a.vino.nombre, a.disponible, a.stock, a.consumidoAntes, a.favorito],
+    [1, "principal", WX.stockSinTomar, "X Stock sin tomar", true, 6, false, false]);
+  assert.deepEqual([b.posicion, b.rol, b.wineId, b.disponible, b.consumidoAntes, b.vecesConsumido],
+    [2, "alternativa", WX.favorito, true, true, 2]);
 
   const s = JSON.parse(sql(`select to_jsonb(s) from public.recommendation_sessions s where id = '${r.cuerpo.sesionId}'`));
   assert.equal(s.user_id, X);
-  assert.equal(s.mode, "food");
+  assert.equal(s.mode, "cellar");
   assert.equal(s.status, "active");
-  assert.equal(s.initial_input, "¿Qué tomo con pescado?");
+  assert.equal(s.initial_input, "algo para hoy");
   assert.deepEqual(s.context, { prueba: true });
   assert.equal(s.engine_version, "prueba-7.3-A");
 
   const items = JSON.parse(sql(`select json_agg(to_jsonb(i) order by position) from public.recommendation_items i where session_id = '${r.cuerpo.sesionId}'`));
-  assert.equal(items.length, 2);
   assert.deepEqual(items.map((i) => [i.position, i.batch_no, i.relationship, i.wine_id]),
-    [[1, 1, "owned", WX.stockSinTomar], [2, 1, "owned", WX.tomadoMal]]);
-  assert.deepEqual(items[1].wine_identity, { nombre: "X Tomado mal", bodega: "Bodega Tres", varietal: "Torrontés", anada: null, lugar: "Cafayate", region: "Salta" });
+    [[1, 1, "owned", WX.stockSinTomar], [2, 1, "owned", WX.favorito]]);
+  assert.deepEqual(items[1].wine_identity, { nombre: "X Favorito", bodega: "Bodega Uno", varietal: "Malbec", anada: 2020, lugar: "Luján de Cuyo", region: "Mendoza" });
 
   // X lo lee por RLS; Y no.
   const propios = await clienteUsuario(X).from("recommendation_items").select("id").eq("session_id", r.cuerpo.sesionId);
   assert.equal(propios.data.length, 2);
   const ajenos = await clienteUsuario(Y).from("recommendation_sessions").select("id").eq("id", r.cuerpo.sesionId);
   assert.equal(ajenos.data.length, 0);
+});
+
+test("motor sintético que recomienda un vino propio SIN stock → 502 motor_invalido, nada guardado", { skip }, async () => {
+  const antes = sesionesDe(X);
+  const { motor } = motorSintetico([WX.tomadoMal]);
+  const r = await llamar({ token: tokenDe(X), deps: { motor } });
+  assert.equal(r.codigo, 502);
+  assert.equal(r.cuerpo.codigo, "motor_invalido");
+  assert.equal(sesionesDe(X), antes);
 });
 
 test("motor que recomienda un vino de otro usuario → 502 motor_invalido, nada guardado", { skip }, async () => {
@@ -360,22 +405,105 @@ test("falla al guardar los items → 503 y la sesión queda en 'error' con cierr
             : fetch(input, init),
       },
     });
-  const r = await llamar({ token: tokenDe(X), body: { consulta: "prueba falla items" }, deps: { motor, crearCliente } });
+  const r = await llamar({ token: tokenDe(X), body: { modo: "cellar", consulta: "prueba falla items" }, deps: { motor, crearCliente } });
   assert.equal(r.codigo, 503);
   assert.equal(r.cuerpo.codigo, "persistencia_error");
   const fila = sql(`select status || '|' || (ended_at is not null) from public.recommendation_sessions where initial_input = 'prueba falla items'`);
   assert.equal(fila, "error|true");
 });
 
-test("candidatos desde la base: toda la biblioteca, sin filtrar por stock", { skip }, async () => {
+test("7.4-B1: recuperarCandidatos sigue describiendo toda la biblioteca, pero los elegibles son solo los que tienen stock", { skip }, async () => {
   const { contexto } = await construirContexto(clienteUsuario(X), X);
-  const { candidatos, resumen } = recuperarCandidatos(contexto);
+  const { resumen } = recuperarCandidatos(contexto);
   assert.deepEqual(resumen, { total: 4, disponibles: 2, consumidosAntes: 3, favoritos: 1 });
-  assert.equal(validarSalidaMotor({ modo: "cellar", recomendaciones: [{ wineId: WX.tomadoSinPuntuar, relationship: "known", explicacion: "x" }] }, candidatos).ok, true);
+  const prep = prepararCellar(contexto);
+  assert.deepEqual(prep.entrada.candidatos.map((c) => c.wineId).sort(), [WX.favorito, WX.stockSinTomar].sort());
+  // Un vino sin stock ya no es una salida válida, aunque sea de la biblioteca.
+  assert.equal(validarSalidaMotor({ modo: "cellar", recomendaciones: [{ wineId: WX.tomadoSinPuntuar, relationship: "known", explicacion: "x" }] }, prep.entrada.candidatos).ok, false);
 });
 
-// Último: 7.3-A no modificó vinos, stock, consumos, preferencias, conocimiento ni eventos.
+// ---------------------------------------------------------------------------
+// 7.4-B1: motor real («Elegir de mi cava») de punta a punta
+// ---------------------------------------------------------------------------
+const itemsDe = (sesionId) => JSON.parse(sql(`select coalesce(json_agg(to_jsonb(i) order by batch_no, position), '[]') from public.recommendation_items i where session_id = '${sesionId}'`));
+
+test("1 elegible (O): una recomendación, explicación de disponibilidad, tanda 1", { skip }, async () => {
+  const r = await llamar({ token: tokenDe(O) });
+  assert.equal(r.codigo, 200, JSON.stringify(r.cuerpo));
+  assert.equal(r.cuerpo.recomendaciones.length, 1);
+  const [p] = r.cuerpo.recomendaciones;
+  assert.deepEqual([p.wineId, p.rol, p.exploracion, p.stock], [WO, "principal", false, 3]);
+  assert.equal(p.explicacion, "Está disponible en tu cava: tenés 3 botellas.");
+  assert.deepEqual(itemsDe(r.cuerpo.sesionId).map((i) => [i.batch_no, i.position, i.wine_id]), [[1, 1, WO]]);
+});
+
+test("2 elegibles (X): favorito como principal y exploración como alternativa", { skip }, async () => {
+  const r = await llamar({ token: tokenDe(X) });
+  assert.equal(r.codigo, 200, JSON.stringify(r.cuerpo));
+  assert.deepEqual(r.cuerpo.recomendaciones.map((x) => [x.wineId, x.rol, x.exploracion]),
+    [[WX.favorito, "principal", false], [WX.stockSinTomar, "alternativa", true]]);
+  assert.equal(r.cuerpo.recomendaciones[0].explicacion,
+    "Lo marcaste como favorito. Lo puntuaste con 4,75 estrellas en promedio, en 2 experiencias. Es un Malbec, una de las variedades que elegiste en tus preferencias.");
+  assert.equal(r.cuerpo.recomendaciones[1].explicacion,
+    "Es un Cabernet Franc, una de las variedades que elegiste en tus preferencias. Todavía no registraste experiencias con este vino.");
+});
+
+test("3 o más elegibles (M): orden de confianza, exploración, restricción de vino, 6 botellas = 1 opción", { skip }, async () => {
+  const r = await llamar({ token: tokenDe(M) });
+  assert.equal(r.codigo, 200, JSON.stringify(r.cuerpo));
+  const c = r.cuerpo;
+  assert.deepEqual(c.recomendaciones.map((x) => [x.posicion, x.wineId, x.rol, x.exploracion]), [
+    [1, WM.favorito, "principal", false],
+    [2, WM.seisBotellas, "alternativa", false],
+    [3, WM.paraExplorar, "alternativa", true],
+  ]);
+  assert.deepEqual(c.recomendaciones.map((x) => x.explicacion), [
+    "Lo marcaste como favorito. Lo puntuaste con 4,5 estrellas.",
+    "Lo puntuaste con 4,75 estrellas en promedio, en 2 experiencias.",
+    "Es un Pinot Noir, una de las variedades que elegiste en tus preferencias. Todavía no registraste experiencias con este vino.",
+  ]);
+  assert.equal(c.recomendaciones[1].stock, 6);
+  const ids = c.recomendaciones.map((x) => x.wineId);
+  assert.equal(ids.includes(WM.excluido), false, "excluido por restricción de vino");
+  assert.equal(ids.includes(WM.sinStock), false, "sin stock");
+
+  const s = JSON.parse(sql(`select to_jsonb(s) from public.recommendation_sessions s where id = '${c.sesionId}'`));
+  assert.deepEqual([s.user_id, s.mode, s.status, s.initial_input, s.engine_version, s.model, s.context_sufficiency],
+    [M, "cellar", "active", null, "7.4-B1.1", null, null]);
+  assert.deepEqual(s.context, { entrada: "elegir_de_mi_cava", tanda: 1 });
+  const items = itemsDe(c.sesionId);
+  assert.deepEqual(items.map((i) => [i.batch_no, i.position, i.relationship, i.wine_id]),
+    [[1, 1, "owned", WM.favorito], [1, 2, "owned", WM.seisBotellas], [1, 3, "owned", WM.paraExplorar]]);
+  for (const [i, rec] of items.map((it, k) => [it, c.recomendaciones[k]])) {
+    assert.equal(i.id, rec.itemId);
+    assert.equal(explicar(i.grounding.afirmaciones), rec.explicacion, "la explicación sale del grounding guardado");
+    assert.equal(i.signals.rol, rec.rol);
+  }
+  // Lo ve M por RLS; X no.
+  assert.equal((await clienteUsuario(M).from("recommendation_items").select("id").eq("session_id", c.sesionId)).data.length, 3);
+  assert.equal((await clienteUsuario(X).from("recommendation_items").select("id").eq("session_id", c.sesionId)).data.length, 0);
+});
+
+test("M: cambiar los precios no altera la recomendación (se restauran al final)", { skip }, async () => {
+  const quitar = (c) => c.recomendaciones.map(({ itemId, ...x }) => x);
+  const antes = await llamar({ token: tokenDe(M) });
+  const original = sql(`select json_agg(json_build_array(wine_id, precio) order by wine_id) from public.wine_privado where user_id = '${M}'`);
+  sql(`update public.wine_privado set precio = case when precio is null then 1 else precio * 7 + 3 end where user_id = '${M}'`);
+  try {
+    const despues = await llamar({ token: tokenDe(M) });
+    assert.deepEqual(quitar(despues.cuerpo), quitar(antes.cuerpo));
+  } finally {
+    for (const [wid, precio] of JSON.parse(original)) {
+      sql(`update public.wine_privado set precio = ${precio === null ? "null" : precio} where wine_id = '${wid}'`);
+    }
+  }
+});
+
+// Último: ni 7.3-A ni 7.4-B1 modificaron vinos, stock, consumos,
+// preferencias, conocimiento ni eventos.
 test("integridad: no se escribió user_knowledge, eventos ni datos de la biblioteca", { skip }, async () => {
   assert.equal(huellaIntegridad(), estadoInicial);
-  assert.equal(Number(sql("select count(*) from public.user_knowledge")), 5);
+  assert.equal(Number(sql("select count(*) from public.user_knowledge")), 7);
+  assert.equal(Number(sql("select count(*) from public.recommendation_events")), 0);
+  assert.equal(Number(sql("select count(*) from public.user_knowledge where knowledge_type = 'inference'")), 1);
 });

@@ -1,29 +1,44 @@
 // =============================================================================
-// Etapa 7.3-A: POST /api/que-tomo — base técnica de «¿Qué tomo?».
+// Etapa 7.3-A / 7.4-B1: POST /api/que-tomo — «¿Qué tomo?».
 // =============================================================================
+// Cuerpo: { modo: "cellar", consulta?: string }
+//   * 7.4-B1 solo atiende "cellar" («Elegir de mi cava», primera tanda).
+//     "food" y "discovery" → 501 modo_no_disponible (7.5). Sin modo o con
+//     otro valor → 400 modo_invalido.
+//   * `consulta` es opcional; si viene se valida (texto, hasta
+//     MAX_CONSULTA) y se guarda en initial_input, pero este bloque no la
+//     interpreta.
 // Flujo:
 //   1. Sesión: Authorization: Bearer <access_token de Supabase>. El usuario
 //      sale SIEMPRE del token (auth.getUser); cualquier user_id del cuerpo se
 //      ignora.
 //   2. Rol: solo admin / editor tienen cava (viewer no).
 //   3. Contexto personal: lectura con el token del usuario (RLS).
-//   4. Candidatos: biblioteca real, orden neutral.
-//   5. Sin candidatos → 200 { estado: "sin_candidatos" } sin llamar al motor.
-//   6. Motor (7.3-B). En 7.3-A no hay: 501 { codigo: "motor_pendiente" }.
-//   7. Salida del motor validada contra los candidatos; recién entonces se
-//      crean la sesión y los items con service_role.
-// Ningún paso inventa vinos, preferencias ni explicaciones.
+//   4. Selección única (prepararCellar → 7.3-B): vinos propios con stock que
+//      superan las restricciones confirmadas.
+//   5. Sin candidatos → 200 { estado: "sin_candidatos", motivo } sin llamar
+//      al motor ni crear sesión. motivo: biblioteca_vacia | sin_stock |
+//      excluidos_por_restriccion.
+//   6. Motor (motorCellar): recibe SOLO los candidatos elegibles.
+//   7. Salida validada contra esos candidatos; recién entonces se crean la
+//      sesión y los items de la tanda 1 con service_role.
+// Ningún paso inventa vinos, preferencias ni explicaciones. No escribe
+// user_knowledge ni recommendation_events.
 // =============================================================================
 
 import { createClient } from "@supabase/supabase-js";
 import { construirContexto } from "./_que-tomo/contexto.js";
 import { recuperarCandidatos } from "./_que-tomo/candidatos.js";
 import { MOTOR_ACTUAL, validarSalidaMotor } from "./_que-tomo/motor.js";
+import { prepararCellar } from "./_que-tomo/motor_cellar.js";
 import { crearSesion, registrarItems, cerrarSesion } from "./_que-tomo/sesiones.js";
 
 export const MAX_CONSULTA = 1000;
 export const TIEMPO_LIMITE_MOTOR_MS = 25000;
 const ROLES_CON_CAVA = ["admin", "editor"];
+export const MODOS_HABILITADOS = Object.freeze(["cellar"]);
+export const MODOS_POSTERGADOS = Object.freeze(["food", "discovery"]);
+export const TANDA_INICIAL = 1;
 const OPCIONES_SERVIDOR = { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } };
 
 function responder(res, status, cuerpo) {
@@ -83,13 +98,20 @@ export function crearHandler(deps = {}) {
     });
 
     // Entrada
-    const consultaCruda = req.body?.consulta;
-    if (typeof consultaCruda !== "string" || !consultaCruda.trim()) {
-      return responder(res, 400, { error: "Escribí qué querés tomar o con qué comida." });
+    const modo = req.body?.modo;
+    if (MODOS_POSTERGADOS.includes(modo)) {
+      return responder(res, 501, { error: "Esta forma de recomendación todavía no está disponible.", codigo: "modo_no_disponible" });
     }
-    const consulta = consultaCruda.trim();
-    if (consulta.length > MAX_CONSULTA) {
-      return responder(res, 400, { error: `La consulta supera los ${MAX_CONSULTA} caracteres.` });
+    if (!MODOS_HABILITADOS.includes(modo)) {
+      return responder(res, 400, { error: "Modo de recomendación no válido.", codigo: "modo_invalido" });
+    }
+    const consultaCruda = req.body?.consulta;
+    if (consultaCruda !== undefined && consultaCruda !== null && typeof consultaCruda !== "string") {
+      return responder(res, 400, { error: "La consulta debe ser texto.", codigo: "consulta_invalida" });
+    }
+    const consulta = typeof consultaCruda === "string" && consultaCruda.trim() ? consultaCruda.trim() : null;
+    if (consulta && consulta.length > MAX_CONSULTA) {
+      return responder(res, 400, { error: `La consulta supera los ${MAX_CONSULTA} caracteres.`, codigo: "consulta_invalida" });
     }
 
     // 2. Rol
@@ -109,13 +131,27 @@ export function crearHandler(deps = {}) {
       return responder(res, 503, { error: ctx.error.mensaje, codigo: "contexto_no_disponible", tipo: ctx.error.tipo });
     }
 
-    // 4. Candidatos
-    const { candidatos, resumen } = recuperarCandidatos(ctx.contexto);
+    // 4. Selección única (7.3-B)
+    let prep;
+    try {
+      prep = prepararCellar(ctx.contexto);
+    } catch {
+      prep = null;
+    }
+    if (!prep?.ok) {
+      return responder(res, 500, { error: "No se pudo preparar la recomendación", codigo: "seleccion_error" });
+    }
 
     // 5. Sin candidatos: respuesta de hecho, sin motor ni sesión.
-    if (candidatos.length === 0) {
-      return responder(res, 200, { estado: "sin_candidatos", recomendaciones: [], biblioteca: resumen });
+    if (prep.sinCandidatos) {
+      return responder(res, 200, {
+        estado: "sin_candidatos",
+        motivo: prep.sinCandidatos.motivo,
+        recomendaciones: [],
+        biblioteca: { ...recuperarCandidatos(ctx.contexto).resumen, excluidosPorRestriccion: prep.sinCandidatos.excluidosPorRestriccion },
+      });
     }
+    const candidatos = prep.entrada.candidatos;
 
     // 6. Motor
     if (typeof motor !== "function") {
@@ -128,7 +164,7 @@ export function crearHandler(deps = {}) {
     let salida;
     try {
       salida = await conTiempoLimite(
-        Promise.resolve().then(() => motor({ consulta, contexto: ctx.contexto, candidatos })),
+        Promise.resolve().then(() => motor({ ...prep.entrada, consulta })),
         tiempoLimiteMotorMs
       );
     } catch (e) {
@@ -140,8 +176,11 @@ export function crearHandler(deps = {}) {
     }
 
     // 7. Validación y persistencia
+    // Solo contra los candidatos elegibles: un vino sin stock, excluido o
+    // ajeno invalida toda la salida. Con candidatos, la tanda no puede venir
+    // vacía, y el modo debe ser el pedido.
     const v = validarSalidaMotor(salida, candidatos);
-    if (!v.ok) {
+    if (!v.ok || v.valor.modo !== modo || v.valor.recomendaciones.length === 0) {
       return responder(res, 502, { error: "El recomendador devolvió una respuesta no válida", codigo: "motor_invalido" });
     }
     const valor = v.valor;
@@ -158,7 +197,7 @@ export function crearHandler(deps = {}) {
     });
     if (!s.ok) return responder(res, 503, { error: s.error.mensaje, codigo: "persistencia_error" });
 
-    const it = await registrarItems(admin, s.sesion.id, valor.recomendaciones);
+    const it = await registrarItems(admin, s.sesion.id, valor.recomendaciones, TANDA_INICIAL);
     if (!it.ok) {
       // La sesión quedó creada sin items: se marca como error (best effort).
       await cerrarSesion(admin, s.sesion.id, "error");
@@ -170,10 +209,13 @@ export function crearHandler(deps = {}) {
       estado: "ok",
       sesionId: s.sesion.id,
       modo: valor.modo,
+      tanda: TANDA_INICIAL,
       suficiencia: valor.suficiencia,
       recomendaciones: valor.recomendaciones.map((r) => ({
         itemId: itemPorPosicion.get(r.posicion)?.id ?? null,
         posicion: r.posicion,
+        rol: r.posicion === 1 ? "principal" : "alternativa",
+        exploracion: Boolean(r.signals?.exploracion),
         wineId: r.candidato.wineId,
         vino: r.candidato.identidad,
         relacion: r.relationship,

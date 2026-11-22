@@ -10,8 +10,9 @@ const { candidatos } = recuperarCandidatos(representarContexto(filasSinteticas()
 const rec = (wineId, extra = {}) => ({ wineId, relationship: "owned", explicacion: "explicación de prueba", ...extra });
 const base = (recs) => ({ modo: "food", suficiencia: "sufficient", recomendaciones: recs });
 
-test("7.3-A no trae motor", () => {
-  assert.equal(MOTOR_ACTUAL, null);
+// 7.4-B1: el motor vigente es el de «Elegir de mi cava» (motor_cellar.test.mjs).
+test("7.4-B1: el motor vigente es una función (motorCellar)", () => {
+  assert.equal(typeof MOTOR_ACTUAL, "function");
 });
 
 test("salida válida: identidad tomada de la base, no del motor", () => {

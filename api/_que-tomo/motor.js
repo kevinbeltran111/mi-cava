@@ -1,9 +1,10 @@
 // =============================================================================
 // Etapa 7.3-A: contrato del motor de recomendación (lo implementa 7.3-B).
 // =============================================================================
-// 7.3-A NO tiene motor. MOTOR_ACTUAL es null y el endpoint responde
-// 501 { codigo: "motor_pendiente" } sin crear sesiones ni simular
-// recomendaciones.
+// HISTÓRICO (7.3-A): no había motor; MOTOR_ACTUAL era null y el endpoint
+// respondía 501 { codigo: "motor_pendiente" }. Desde 7.4-B1 el motor vigente
+// es motorCellar y la entrada cambió (ver el bloque 7.4 más abajo); lo que
+// sigue describe el contrato ORIGINAL, cuya SalidaMotor no cambió.
 //
 // PUNTO DE INTEGRACIÓN 7.3-B: reemplazar MOTOR_ACTUAL por una función
 //
@@ -42,9 +43,24 @@
 //   }
 // =============================================================================
 
-import { fallo } from "./errores.js";
+// -----------------------------------------------------------------------------
+// 7.4 — Bloque 1: el motor vigente es motorCellar (motor_cellar.js), solo
+// para modo 'cellar' («Elegir de mi cava»). La entrada ya NO incluye la
+// biblioteca completa ni el contexto: el endpoint la arma con
+// prepararCellar() y el motor recibe
+//
+//   { modo: 'cellar', consulta, candidatos, preferencias: { variedadesDeclaradas } }
+//
+//   candidatos  solo vinos propios con stock que superan las restricciones
+//               confirmadas (misma forma que candidatos.js + variedad)
+//
+// La salida se valida con validarSalidaMotor contra esos mismos candidatos.
+// -----------------------------------------------------------------------------
 
-export const MOTOR_ACTUAL = null;
+import { fallo } from "./errores.js";
+import { motorCellar } from "./motor_cellar.js";
+
+export const MOTOR_ACTUAL = motorCellar;
 
 export const MODOS_PERMITIDOS = Object.freeze(["food", "cellar"]);
 export const SUFICIENCIAS = Object.freeze(["insufficient", "partial", "sufficient"]);
