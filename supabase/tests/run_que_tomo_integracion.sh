@@ -72,4 +72,4 @@ echo "== PostgREST $("$POSTGREST_BIN" --version) en :$PORT sobre $DB"
 
 cd "$ROOT"
 IT_REST_URL="http://127.0.0.1:$PORT" IT_JWT_SECRET="$SECRET" IT_DB="$DB" \
-  node --test tests/que-tomo/que_tomo.integracion.test.mjs
+  node --test tests/que-tomo/que_tomo.integracion.test.mjs tests/que-tomo/conocimiento.integracion.test.mjs
