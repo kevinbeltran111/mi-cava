@@ -5,9 +5,12 @@
 //   * 7.4-B1 solo atiende "cellar" («Elegir de mi cava», primera tanda).
 //     "food" y "discovery" → 501 modo_no_disponible (7.5). Sin modo o con
 //     otro valor → 400 modo_invalido.
-//   * `consulta` es opcional; si viene se valida (texto, hasta
-//     MAX_CONSULTA) y se guarda en initial_input, pero este bloque no la
-//     interpreta.
+//   * `consulta`: ausente, null o en blanco = sin consulta (inicio directo).
+//     Un texto no vacío → 400 refinamiento_no_disponible: el refinamiento
+//     («hoy no quiero Malbec») llega en un bloque posterior y aceptar el
+//     texto sin aplicarlo devolvería, por ejemplo, un Malbec. Otro tipo de
+//     dato → 400 consulta_invalida. Ambos rechazos ocurren antes de leer
+//     datos: sin motor, sin sesión y sin items. initial_input queda null.
 // Flujo:
 //   1. Sesión: Authorization: Bearer <access_token de Supabase>. El usuario
 //      sale SIEMPRE del token (auth.getUser); cualquier user_id del cuerpo se
@@ -33,6 +36,8 @@ import { MOTOR_ACTUAL, validarSalidaMotor } from "./_que-tomo/motor.js";
 import { prepararCellar } from "./_que-tomo/motor_cellar.js";
 import { crearSesion, registrarItems, cerrarSesion } from "./_que-tomo/sesiones.js";
 
+// Límite para cuando el refinamiento acepte texto (bloque posterior). En
+// 7.4-B1 todo texto no vacío se rechaza antes de llegar a este límite.
 export const MAX_CONSULTA = 1000;
 export const TIEMPO_LIMITE_MOTOR_MS = 25000;
 const ROLES_CON_CAVA = ["admin", "editor"];
@@ -109,10 +114,13 @@ export function crearHandler(deps = {}) {
     if (consultaCruda !== undefined && consultaCruda !== null && typeof consultaCruda !== "string") {
       return responder(res, 400, { error: "La consulta debe ser texto.", codigo: "consulta_invalida" });
     }
-    const consulta = typeof consultaCruda === "string" && consultaCruda.trim() ? consultaCruda.trim() : null;
-    if (consulta && consulta.length > MAX_CONSULTA) {
-      return responder(res, 400, { error: `La consulta supera los ${MAX_CONSULTA} caracteres.`, codigo: "consulta_invalida" });
+    if (typeof consultaCruda === "string" && consultaCruda.trim()) {
+      return responder(res, 400, {
+        error: "Todavía no se puede ajustar la recomendación con texto. Entrá a «Elegir de mi cava» sin escribir nada.",
+        codigo: "refinamiento_no_disponible",
+      });
     }
+    const consulta = null;
 
     // 2. Rol
     try {

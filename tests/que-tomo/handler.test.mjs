@@ -50,14 +50,15 @@ test("401 sin token y con token inválido, sin consultar datos", async () => {
   assert.equal(r.res.codigo, 401);
 });
 
-// 7.4-B1: la consulta ya no es obligatoria; el modo sí. Sin modo o con un
-// modo desconocido → 400; food / discovery → 501 (7.5). En todos los casos,
-// antes de leer datos.
-test("400 sin modo válido o con consulta no textual o demasiado larga; 501 para food / discovery", async () => {
+// 7.4-B1: el modo es obligatorio y la consulta con texto se rechaza
+// (refinamiento no disponible). Sin modo o con un modo desconocido → 400;
+// food / discovery → 501 (7.5). En todos los casos, antes de leer datos.
+test("400 sin modo válido, con consulta no textual o con texto; 501 para food / discovery", async () => {
   const h = { authorization: "Bearer token-bueno" };
   for (const [body, codigo] of [
     [undefined, 400], [{}, 400], [{ consulta: "hola" }, 400], [{ modo: "otro" }, 400],
-    [{ modo: "cellar", consulta: 42 }, 400], [{ modo: "cellar", consulta: "x".repeat(MAX_CONSULTA + 1) }, 400],
+    [{ modo: "cellar", consulta: 42 }, 400], [{ modo: "cellar", consulta: "hoy no quiero Malbec" }, 400],
+    [{ modo: "cellar", consulta: "x".repeat(MAX_CONSULTA + 1) }, 400],
     [{ modo: "food", consulta: "asado" }, 501], [{ modo: "discovery" }, 501],
   ]) {
     const { res, registro } = await llamar({ method: "POST", headers: h, body });

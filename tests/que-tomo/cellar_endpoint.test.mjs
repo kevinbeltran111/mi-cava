@@ -149,12 +149,34 @@ test("no escribe user_knowledge ni recommendation_events: solo sesión e items",
   assert.equal(base.tablas.recommendation_events.length, 0);
 });
 
-test("consulta opcional: si viene se guarda tal cual (recortada) y no cambia el resultado", async () => {
+test("«hoy no quiero Malbec»: 400 refinamiento_no_disponible, sin motor, sesión ni items (aunque haya un Malbec elegible)", async () => {
+  const esc = {
+    preferencias: PREF,
+    vinos: [{ id: v(1), nombre: "Malbec favorito", varietal: "Malbec", stock: 2, favorito: true, puntuaciones: [5] }, { id: v(2), nombre: "Merlot", varietal: "Merlot", stock: 1 }],
+  };
+  for (const consulta of ["hoy no quiero Malbec", "  hoy no quiero Malbec  ", "x"]) {
+    const { res, base, llamadas } = await llamar(esc, { modo: "cellar", consulta });
+    assert.equal(res.codigo, 400, consulta);
+    assert.equal(res.cuerpo.codigo, "refinamiento_no_disponible");
+    assert.match(res.cuerpo.error, /todavía no/i);
+    assert.equal(res.cuerpo.recomendaciones, undefined);
+    assert.equal(llamadas.length, 0, "no se invoca el motor");
+    assert.deepEqual(base.escrituras, [], "no se registran sesiones ni items");
+    assert.equal(base.tablas.recommendation_sessions.length + base.tablas.recommendation_items.length, 0);
+  }
+});
+
+test("null, en blanco o ausente = sin consulta: inicio directo, mismo resultado, initial_input null", async () => {
   const esc = { preferencias: PREF, vinos: [{ id: v(1), nombre: "A", stock: 1 }, { id: v(2), nombre: "B", stock: 1, puntuaciones: [5] }] };
-  const a = await llamar(esc, { modo: "cellar" });
-  const b = await llamar(esc, { modo: "cellar", consulta: "  hoy no quiero Malbec  " });
-  assert.deepEqual(a.res.cuerpo.recomendaciones.map((r) => r.wineId), b.res.cuerpo.recomendaciones.map((r) => r.wineId));
-  assert.equal(b.base.tablas.recommendation_sessions[0].initial_input, "hoy no quiero Malbec");
+  const resultados = [];
+  for (const body of [{ modo: "cellar" }, { modo: "cellar", consulta: null }, { modo: "cellar", consulta: "" }, { modo: "cellar", consulta: "   \n\t " }]) {
+    const { res, base, llamadas } = await llamar(esc, body);
+    assert.equal(res.codigo, 200, JSON.stringify(body));
+    assert.equal(llamadas[0].consulta, null);
+    assert.equal(base.tablas.recommendation_sessions[0].initial_input, null);
+    resultados.push(res.cuerpo.recomendaciones.map((r) => [r.wineId, r.explicacion]));
+  }
+  for (const r of resultados) assert.deepEqual(r, resultados[0]);
 });
 
 test("modos fuera de alcance y entradas inválidas: sin leer datos ni crear sesión", async () => {
@@ -166,7 +188,9 @@ test("modos fuera de alcance y entradas inválidas: sin leer datos ni crear sesi
     [{ consulta: "algo" }, 400, "modo_invalido"],
     [{ modo: "CELLAR" }, 400, "modo_invalido"],
     [{ modo: "cellar", consulta: 42 }, 400, "consulta_invalida"],
-    [{ modo: "cellar", consulta: "x".repeat(1001) }, 400, "consulta_invalida"],
+    [{ modo: "cellar", consulta: { texto: "hoy no quiero Malbec" } }, 400, "consulta_invalida"],
+    [{ modo: "cellar", consulta: "hoy no quiero Malbec" }, 400, "refinamiento_no_disponible"],
+    [{ modo: "cellar", consulta: "x".repeat(1001) }, 400, "refinamiento_no_disponible"],
   ]) {
     const { res, base, llamadas } = await llamar(esc, body);
     assert.equal(res.codigo, codigo, JSON.stringify(body).slice(0, 40));

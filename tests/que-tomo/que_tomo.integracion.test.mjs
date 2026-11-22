@@ -218,6 +218,18 @@ test("modos fuera de alcance: food / discovery → 501, sin modo → 400; sin se
   assert.equal(sesionesDe(X), 0);
 });
 
+test("«hoy no quiero Malbec» (X tiene un Malbec elegible): 400 refinamiento_no_disponible, sin motor, sesión ni items", { skip }, async () => {
+  const antes = sql(`select count(*) || '|' || (select count(*) from public.recommendation_items) from public.recommendation_sessions`);
+  for (const consulta of ["hoy no quiero Malbec", "  otra cosa  "]) {
+    const { motor, llamadas } = motorSintetico([WX.favorito]);
+    const r = await llamar({ token: tokenDe(X), body: { modo: "cellar", consulta }, deps: { motor } });
+    assert.equal(r.codigo, 400);
+    assert.equal(r.cuerpo.codigo, "refinamiento_no_disponible");
+    assert.equal(llamadas.length, 0);
+  }
+  assert.equal(sql(`select count(*) || '|' || (select count(*) from public.recommendation_items) from public.recommendation_sessions`), antes);
+});
+
 for (const [nombre, uid, motivo] of [
   ["biblioteca vacía", E, "biblioteca_vacia"],
   ["vinos sin stock", S, "sin_stock"],
@@ -277,7 +289,7 @@ test("RLS: con el token de X no se leen datos de Y aunque se pida su user_id", {
 
 test("el usuario sale del token: un user_id en el cuerpo se ignora", { skip }, async () => {
   const { motor, llamadas } = motorSintetico([WX.favorito]);
-  const r = await llamar({ token: tokenDe(X), body: { modo: "cellar", consulta: "algo", userId: Y, user_id: Y }, deps: { motor } });
+  const r = await llamar({ token: tokenDe(X), body: { modo: "cellar", userId: Y, user_id: Y }, deps: { motor } });
   assert.equal(r.codigo, 200, JSON.stringify(r.cuerpo));
   assert.deepEqual(llamadas[0].candidatos.map((c) => c.wineId).sort(), [WX.favorito, WX.stockSinTomar].sort());
   assert.equal(JSON.stringify(llamadas[0]).includes(WY), false);
@@ -305,13 +317,13 @@ test("fallo al leer el contexto → 503 contexto_no_disponible, sin motor ni ses
 // ---------------------------------------------------------------------------
 // Circuito completo con motor sintético
 // ---------------------------------------------------------------------------
-test("motor sintético: sesión e items reales, identidad desde la base, consulta opcional guardada", { skip }, async () => {
+test("motor sintético: sesión e items reales, identidad desde la base, consulta en blanco = sin consulta", { skip }, async () => {
   const { motor, llamadas } = motorSintetico([WX.stockSinTomar, WX.favorito]);
-  const r = await llamar({ token: tokenDe(X), body: { modo: "cellar", consulta: "  algo para hoy  " }, deps: { motor } });
+  const r = await llamar({ token: tokenDe(X), body: { modo: "cellar", consulta: "   " }, deps: { motor } });
   assert.equal(r.codigo, 200, JSON.stringify(r.cuerpo));
   assert.equal(r.cuerpo.estado, "ok");
   assert.equal(r.cuerpo.tanda, 1);
-  assert.equal(llamadas[0].consulta, "algo para hoy");
+  assert.equal(llamadas[0].consulta, null);
   // 7.4-B1: el motor recibe solo los elegibles (stock > 0), no toda la biblioteca.
   assert.equal(llamadas[0].candidatos.length, 2);
   assert.equal(llamadas[0].contexto, undefined);
@@ -326,7 +338,7 @@ test("motor sintético: sesión e items reales, identidad desde la base, consult
   assert.equal(s.user_id, X);
   assert.equal(s.mode, "cellar");
   assert.equal(s.status, "active");
-  assert.equal(s.initial_input, "algo para hoy");
+  assert.equal(s.initial_input, null);
   assert.deepEqual(s.context, { prueba: true });
   assert.equal(s.engine_version, "prueba-7.3-A");
 
@@ -405,11 +417,14 @@ test("falla al guardar los items → 503 y la sesión queda en 'error' con cierr
             : fetch(input, init),
       },
     });
-  const r = await llamar({ token: tokenDe(X), body: { modo: "cellar", consulta: "prueba falla items" }, deps: { motor, crearCliente } });
+  const previas = sql(`select coalesce(string_agg(id::text, ','), '') from public.recommendation_sessions where user_id = '${X}'`).split(",").filter(Boolean);
+  const r = await llamar({ token: tokenDe(X), body: { modo: "cellar" }, deps: { motor, crearCliente } });
   assert.equal(r.codigo, 503);
   assert.equal(r.cuerpo.codigo, "persistencia_error");
-  const fila = sql(`select status || '|' || (ended_at is not null) from public.recommendation_sessions where initial_input = 'prueba falla items'`);
-  assert.equal(fila, "error|true");
+  const nuevas = JSON.parse(sql(`select json_agg(json_build_array(id, status, ended_at is not null)) from public.recommendation_sessions where user_id = '${X}'`))
+    .filter(([id]) => !previas.includes(id));
+  assert.equal(nuevas.length, 1);
+  assert.deepEqual(nuevas[0].slice(1), ["error", true]);
 });
 
 test("7.4-B1: recuperarCandidatos sigue describiendo toda la biblioteca, pero los elegibles son solo los que tienen stock", { skip }, async () => {
