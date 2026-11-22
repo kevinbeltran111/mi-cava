@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 2.3 — cierre de Etapa 7.2 · **Fecha de corte:** 2026-11-15 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 2.4 — cierre de Etapa 7.3 y apertura de 7.4 · **Fecha de corte:** 2026-11-22 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -12,9 +12,11 @@ Mi Cava es una biblioteca personal de vinos, no solo un inventario. Permite guar
 | Etapa 5 — Abrir e historial | Cerrada y probada | 02 |
 | Etapa 6 — UX y beta | Beta cerrada activa; validación continua | 03 |
 | UX-20 — Guardar / tener / abrir / probar sin stock | Cerrada y en Producción | 03 / 00 |
-| Etapa 7 — Inteligencia personal | En desarrollo por subetapas; verificar cierres y despliegues específicos | 05 |
+| Etapa 7 — Inteligencia personal | En desarrollo por subetapas: 7.3 cerrada; 7.4 abierta para primera experiencia visible | 00 / 05.3 / 05.4 |
 | Etapa 7.1 — Datos de inteligencia | Trabajo de base realizado; contrastar estado final | 05 / 99 |
 | Etapa 7.2 — Onboarding | **CERRADA 15/11/2026**. Migración 7.2-A aplicada/verificada; frontend 7.2-B publicado PR #7, merge f729c2f; Preview 14/14, Producción 6/6; monitoreo sin 4xx/5xx (cierre informado por usuario) | 05 |
+| Etapa 7.3 — Inteligencia y conocimiento personal | **CERRADA 22/11/2026**. 7.3-A (base autenticada, contexto, candidatos y soporte de sesiones) y 7.3-B (conocimiento personal y evidencias); integración 23/23 Docker Desktop, PR #8, merge `9a804a9`, Producción READY; sin nuevas migraciones; escrituras de inferencias desactivadas | 00 / 05.3; soporte técnico 99 |
+| Etapa 7.4 — «Elegir de mi cava» | **ABIERTA — diseño y desarrollo, publicación no autorizada**. Recomendar al entrar entre vinos con stock: una opción principal y hasta dos alternativas, refinamiento posterior; inicia medición | 00 / 05.4; soporte técnico 99 |
 | UX-21 — Ajustes de vistas | Cerrada; merge en main y cuatro verificaciones de Producción informadas como OK | 03 / 00 |
 | Etapa 8 — Descubrir | Futuro, no autorizado | 00 |
 | Mobile — Android / iOS | Objetivo estratégico, ejecución sin programar | 00 / 99 |
@@ -118,3 +120,26 @@ Auditar conversaciones 02, 03, 04, 05 y 99, contrastar cada PIN con el estado ac
 
 ### Próxima prioridad de producto
 Con 7.2 cerrada, el foco funcional de Etapa 7 pasa al diseño y desarrollo controlado de **«¿Qué tomo?»** en conversación 05. Antes de implementar: precisar alcance v1, puertas de entrada, contexto personal mínimo, candidatos y reglas de ranking, UX de recomendaciones, observabilidad, pruebas y resguardos de datos. La revisión SEC-01 se prioriza antes de ampliar la beta, en paralelo y sin autorizar cambios. No reabrir 7.2 por UX-22 salvo decisión posterior.
+
+## Hito de cierre — Etapa 7.3 (22/11/2026)
+**Estado: CERRADA. Validada, integrada en `main`, desplegada en Producción y documentada.** Responsable de ejecución: **05.3 — Etapa 7.3 · Inteligencia y conocimiento personal**; seguimiento de hito: **00**; cuestiones técnicas transversales: **99**.
+
+- **7.3-A — Base técnica de «¿Qué tomo?»**: endpoint autenticado, lectura de contexto personal, recuperación de candidatos y base para registrar sesiones y recomendaciones.
+- **7.3-B — Motor de conocimiento personal**: organiza preferencias y señales de la cava, reconstruye evidencias y distingue hechos explícitos, inferencias, restricciones persistentes y temporales.
+- **Control vigente**: las escrituras de inferencias siguen desactivadas; no activar por inferencia de este cierre.
+- **Validación comunicada**: 23/23 pruebas de integración aprobadas con Docker Desktop, 17 de A y 6 de B; aislamiento de usuarios con RLS y verificación de ausencia de escrituras en `user_knowledge`.
+- **Integración**: [PR #8](https://github.com/kevinbeltran111/mi-cava/pull/8), merge `9a804a9` en `main` (merge confirmado en GitHub).
+- **Producción**: [deployment de Vercel](https://vercel.com/cava10/mi-cava/F5FUjTy4xoJSSssw12EjdhU9B31m) comunicado como **READY** y con el código validado. Publicación sin nuevas migraciones.
+- **Documentación**: procedimiento de integración Docker actualizado con ruta efectiva Windows, corrida aprobada y referencias a PR/deployment, según cierre de 05.3.
+- **Límite de validación**: las pruebas con cuentas reales en Producción **no** formaron parte de la validación 7.3; no registrarlas como aprobadas.
+- **Limpieza de rama**: opcional, no bloquea el cierre; no se ordena borrado.
+- **Pendientes existentes**: `SEC-01` sigue pendiente de análisis antes de ampliar beta; `TECH-01` conserva su verificación histórica. No duplicar.
+
+## Apertura — Etapa 7.4 · «Elegir de mi cava» (22/11/2026)
+**Estado: ABIERTA. Primera experiencia visible de «¿Qué tomo?»; publicación NO autorizada.** Responsable: **05.4 — Etapa 7.4 · Elegir de mi cava**; gobernanza: **00**; soporte técnico según corresponda: **99**.
+
+**Decisión de producto aprobada:** al entrar, recomendar directamente entre **vinos con stock**, con **una opción principal y hasta dos alternativas**. El usuario podrá **refinar o corregir después**. La **medición comienza en 7.4**.
+
+**Fuera del alcance de 7.4 y reservado para 7.5:** «Acompañar una comida» y «Quiero que me sorprendas».
+
+La apertura no habilita desplegar, crear migraciones ni activar escrituras de inferencias. Se requiere autorización separada para toda implementación/publicación que la necesite.
