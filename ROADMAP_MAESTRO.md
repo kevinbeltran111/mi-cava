@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 2.7 — conciliación de visión, legal y centro de proyecto · **Fecha de corte:** 2026-11-23 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 2.8 — reconstrucción histórica y conciliación técnica · **Fecha de corte:** 2026-11-23 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -13,7 +13,7 @@ Mi Cava es una biblioteca personal de vinos, no solo un inventario. Permite guar
 | Etapa 6 — UX y beta | Beta cerrada activa; validación continua | 03 |
 | UX-20 — Guardar / tener / abrir / probar sin stock | Cerrada y en Producción | 03 / 00 |
 | Etapa 7 — Inteligencia personal | En desarrollo por subetapas: 7.3 cerrada; 7.4 abierta para primera experiencia visible | 00 / 05.3 / 05.4 |
-| Etapa 7.1 — Datos de inteligencia | Trabajo de base realizado; contrastar estado final | 05 / 99 |
+| Etapa 7.1 — Datos de inteligencia | Migración de modelo de inteligencia registrada como aplicada en Producción en revisión del 09/11/2026; validación y antecedentes documentados; conservar controles pendientes de seguridad por SEC-01 | 05 / 99 |
 | Etapa 7.2 — Onboarding | **CERRADA 15/11/2026**. Migración 7.2-A aplicada/verificada; frontend 7.2-B publicado PR #7, merge f729c2f; Preview 14/14, Producción 6/6; monitoreo sin 4xx/5xx (cierre informado por usuario) | 05 |
 | Etapa 7.3 — Inteligencia y conocimiento personal | **CERRADA 22/11/2026**. 7.3-A (base autenticada, contexto, candidatos y soporte de sesiones) y 7.3-B (conocimiento personal y evidencias); integración 23/23 Docker Desktop, PR #8, merge `9a804a9`, Producción READY; sin nuevas migraciones; escrituras de inferencias desactivadas | 00 / 05.3; soporte técnico 99 |
 | Etapa 7.4 — «Elegir de mi cava» | **ABIERTA — diseño y desarrollo, publicación no autorizada**. Recomendar al entrar entre vinos con stock: una opción principal y hasta dos alternativas, refinamiento posterior; inicia medición | 00 / 05.4; soporte técnico 99 |
@@ -50,7 +50,7 @@ Estados posibles: **pendiente de evaluación**, **por verificar**, **en diseño*
 | SOC-01 | Descubrir, Cavas compartidas, visibilidad y rol viewer | Roadmap | Futuro | Por definir | Después de consolidar valor personal y privacidad | 00 |
 | MOB-01 | Aplicación móvil Android e iOS | Visión del producto | Objetivo confirmado; no iniciado | Estratégica, ejecución sin fecha | Evaluar momento tras validar producto | 00 / 99 |
 | COM-01 | Recomendaciones de compra, bodegas/vinotecas y posible monetización | Visión Etapa 7+ | Futuro, sin autorización comercial | Por definir | Confianza, calidad del recomendador y separación de patrocinio | 00 / 05 |
-| TECH-01 | Conciliar documentación, migraciones y baseline técnico | Auditoría histórica | Por verificar estado actual | Alta de gobernanza | Revisión con 99, sin asumir que sigue abierto | 99 |
+| TECH-01 | Conciliar documentación, migraciones y baseline técnico | Auditoría histórica de octubre 2026 | **Parcialmente resuelto**: baseline SQL de Producción documentado e integrado en PR #1; resto de hallazgos históricos por verificar | Alta de gobernanza | Contrastar observaciones de 10/10 con versiones y pruebas actuales; SEC-01 por separado | 99 |
 
 **SEC-01 — detalle de referencia:** (1) ocho funciones SECURITY DEFINER del baseline con ejecución reportada por anon/authenticated; (2) RLS sin policies en `analytics_identity`; (3) protección de contraseñas filtradas de Supabase Auth desactivada. Son hallazgos reportados, no vulnerabilidades confirmadas. No publicar detalles adicionales de explotación en este repositorio público. Revisar permisos, flujos, exposición y severidad antes de decidir cambios.
 
@@ -184,7 +184,7 @@ La apertura no habilita desplegar, crear migraciones ni activar escrituras de in
 | Etapas 1–4 | Descripción, entregables, decisiones, fechas y evidencias de cierre | Historial temprano / GitHub | Por recuperar y verificar |
 | Etapa 5 | Detalle de abrir botella, stock, consumos, puntuación y experiencia sin stock | Conversación 02 y cambios de código | Hito principal cerrado; detalle documental por completar |
 | Etapa 6 | Resultado actual de UX-P01 a UX-P11; distinguir correcciones ya publicadas de ideas pendientes | Conversación 03, testers, producción | En conciliación |
-| Etapa 7.1 | Alcance final, estructura y pruebas de datos de inteligencia | Conversación 05, migraciones y documentación | Por verificar |
+| Etapa 7.1 | Completar acta de cierre y referencias exactas de pruebas; migración de modelo aplicada según README Supabase (revisión 09/11) | Conversación 05, migraciones y documentación | Parcialmente documentada |
 | Etapas 7.2 / 7.3 | Localización de actas y procedimientos completos; actualizar referencias comprobables | Conversaciones 05.2 y 05.3, PR #7 y #8 | Hitos cerrados; documentación parcial ubicada |
 | Etapa 7.4 | Subbloques, decisiones detalladas y estado real de integración; no inferir despliegues | Conversación 05.4 | En desarrollo, conciliación continua |
 | Marca M01 | Estado de búsqueda fonética, acreditación y decisión de registro marcario | Conversación 04.1 / INPI | Pago de búsqueda confirmado; resultado por verificar |
@@ -203,3 +203,43 @@ La apertura no habilita desplegar, crear migraciones ni activar escrituras de in
 
 ### Orden recomendado de recuperación (no bloquea Etapa 7.4)
 1. Completar Etapas 1–6 y el inventario UX histórico; 2. precisar Etapas 7.1 y 7.4; 3. conciliar estado de Legal/Marca/99; 4. incorporar referencias y enlaces accesibles desde el Site; 5. probar consistencia por IDs y conciliación Site ↔ GitHub.
+
+
+## Reconstrucción histórica — evidencias del producto inicial (23/11/2026)
+**Advertencia metodológica:** se identificaron capacidades en el repositorio y en una auditoría técnica histórica del 10/10/2026, pero **NO** hay prueba suficiente para atribuir cada capacidad a un número exacto de Etapa 1, 2, 3 o 4 o asignar una fecha individual de cierre. Se documentan como secuencia histórica funcional **sin inventar hitos formales**. El mapa de etapas 1–4 sigue pendiente de conciliación con sus conversaciones de origen.
+
+### Capacidades tempranas con evidencia histórica
+| Bloque funcional histórico | Evidencia documentada | Estado de archivo |
+|---|---|---|
+| Biblioteca web | SPA React/Vite con Supabase y despliegue Vercel; catalogación de vinos | Existente al baseline de octubre |
+| Control de acceso y roles | Inicio por link mágico; roles admin/editor/viewer; solicitudes e invitaciones | Existente al baseline de octubre; comportamiento actual se valida aparte |
+| Identificación por fotografía | Foto → identificación IA Anthropic → revisión humana antes de guardar | Existente al baseline de octubre |
+| Cava personal y datos privados | Identidad del vino separada de precio/stock/favoritos; roles viewer sin cava | Existente al baseline de octubre |
+| Búsqueda y filtros | Bodega, varietal, añada, región/lugar, stock, Tengo/Tomé, Favoritos | Existente al baseline de octubre; versiones posteriores modificaron filtros |
+| Duplicados | UX-19, distinguir agregar a vino existente y guardar otro | Confirmada por auditoría histórica; verificar referencia de cierre |
+| Abrir y registrar consumo | RPC para descontar stock y registrar experiencia, puntuación y comida | Etapa 5 cerrada según registros de producto |
+| UX-20 — Guardar/Tener/Probar | Intenciones separadas en alta; estado «Guardados» definido como stock 0 y sin consumos | Integrado en PR #2; cierre y Producción confirmados por usuario |
+| UX-21 — Vistas | Tarjetas, cuadrícula compacta y lista compacta | Integrado en PR #6, comprobaciones de Producción informadas OK |
+
+**Referencias consultadas:** `README.md` y `supabase/README.md` del repositorio, auditoría del 10/10/2026 y commits/PRs. No convertir el texto del README raíz en una descripción de la UX vigente: conserva ejemplos y afirmaciones de fases anteriores, incluso sobre visibilidad de vinos y roles que contradicen la Cava personal actual.
+
+### Conciliación de TECH-01 — evidencia posterior al diagnóstico inicial
+La auditoría histórica del 10/10 detectó migraciones ausentes en el repositorio y `schema.sql` desactualizado. El trabajo posterior generó **dos baselines de Producción verificados** (schema público y Storage), movió el SQL antiguo a `supabase/historico/` y documentó el procedimiento en `supabase/README.md`. Fue integrado mediante [PR #1](https://github.com/kevinbeltran111/mi-cava/pull/1), merge `d79a0f2`, con origen en commit `6f63816`.
+
+**Conclusión delimitada:** se resolvió la **falta de baseline versionado a fecha 10/10**. Esto no implica que los hallazgos originales de RLS, Storage, permisos, Realtime, atomicidad o debugging se hayan corregido, ni que todos sigan vigentes: sus estados requieren nueva evaluación de Producción. **SEC-01** es el registro principal de seguridad y no se duplica dentro de TECH-01.
+
+El `supabase/README.md` indica migración `20261025000000_etapa7_modelo_inteligencia.sql` de Etapa 7.1 aplicada (comprobación de historial de Producción el 09/11/2026), seis tablas de inteligencia y pruebas locales. La documentación de ese mismo archivo contiene al menos una afirmación histórica desactualizada sobre 7.2-A («no aplicada»), contradicha por el cierre posterior de 7.2 validado en Producción. Esto exige **lectura con fecha de corte** y no demuestra un problema de despliegue actual.
+
+### Clasificación histórica de observaciones de octubre — no reabrir automáticamente
+| Tema de auditoría histórica | Referencia de backlog | Estado para planificación |
+|---|---|---|
+| Migraciones y baseline sin versionar | TECH-01 | **Resuelto en lo relativo al baseline de 10/10**; revisar mantenimiento documental posterior |
+| RLS, privilegios y exposición efectiva | SEC-01 | Pendiente de evaluación por 99, sin vulnerabilidad confirmada por este documento |
+| Storage y fotografía de etiquetas | PRIV-01 / SEC-01 | Verificar políticas actuales antes de concluir |
+| Realtime, carga no atómica, instrumentación de depuración | TECH-01 | Observaciones del diagnóstico histórico; estado actual por verificar |
+| Flujo de ingreso como viewer/editor y referencias antiguas del README | TECH-01 / experiencia de beta | Describir comportamiento actual con evidencia, no usar README histórico como especificación |
+| Estado de emails/Resend | QA-72-RESEND | Tiene seguimiento específico posterior; no crear otro ID |
+| UX de alta, fotografía y navegación | UX-P01 a UX-P09 | Contrastar con producción o cierres antes de mover estados |
+
+### Siguiente bloque de conciliación
+Recuperar el mapa formal de etapas 1–4 de sus registros originales; después, verificar cada `UX-P0x` de Etapa 6 contra sus cierres y la UI real. El hallazgo documental no habilita modificaciones técnicas o de seguridad.
