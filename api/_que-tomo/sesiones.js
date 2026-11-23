@@ -261,3 +261,35 @@ export async function insertarEventos(admin, filas) {
     return clasificarError(e, "No se pudo registrar el evento.");
   }
 }
+
+// -----------------------------------------------------------------------------
+// 7.4 — Medición de consultas sin candidatos (opción A de
+// supabase/propuestas/7_4_B4_medicion_sin_sesion.md, aprobada).
+// -----------------------------------------------------------------------------
+// Una consulta NUEVA que termina en sin_candidatos queda registrada como una
+// sesión CERRADA (status 'completed', ended_at = ahora), sin ítems y sin
+// motor. Por estar cerrada, el refinamiento y la reserva la rechazan
+// (sesion_inactiva). context.resultado / context.motivo permiten contarla.
+export async function registrarSesionSinCandidatos(admin, { userId, modo, contexto }) {
+  try {
+    const { data, error } = await admin
+      .from("recommendation_sessions")
+      .insert({
+        user_id: userId,
+        mode: modo,
+        status: "completed",
+        initial_input: null,
+        context: contexto,
+        context_sufficiency: null,
+        engine_version: null,
+        model: null,
+        ended_at: AHORA_EN_SERVIDOR,
+      })
+      .select("id,status")
+      .single();
+    if (error) return clasificarError(error, "No se pudo registrar la consulta.");
+    return { ok: true, sesion: data };
+  } catch (e) {
+    return clasificarError(e, "No se pudo registrar la consulta.");
+  }
+}

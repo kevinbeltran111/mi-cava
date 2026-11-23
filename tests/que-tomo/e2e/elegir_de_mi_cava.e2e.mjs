@@ -207,16 +207,24 @@ test("una sola opción disponible", async () => {
 });
 
 test("estados vacíos con su acción: cava vacía, sin stock, sin resultados por filtro y por reserva", async () => {
-  let { page, context } = await abrirApp({ preferencias: PREF, vinos: [] });
+  // Medición: cada consulta sin candidatos queda como una sesión cerrada sin ítems.
+  const cerradaCon = (base, motivo) => {
+    const s = base.tablas.recommendation_sessions;
+    assert.deepEqual(s.map((x) => [x.status, x.context.resultado, x.context.motivo]), [["completed", "sin_candidatos", motivo]]);
+    assert.equal(base.tablas.recommendation_items.length, 0);
+  };
+  let { base, page, context } = await abrirApp({ preferencias: PREF, vinos: [] });
   await page.getByRole("button", { name: "Elegir de mi cava" }).click();
   await page.getByTestId("estado-biblioteca_vacia").waitFor();
+  cerradaCon(base, "biblioteca_vacia");
   await page.getByRole("button", { name: "Agregar vino" }).last().waitFor();
   await foto(page, "11-cava-vacia-escritorio");
   await context.close();
 
-  ({ page, context } = await abrirApp({ preferencias: PREF, vinos: [{ ...VINOS.bonarda }] }));
+  ({ base, page, context } = await abrirApp({ preferencias: PREF, vinos: [{ ...VINOS.bonarda }] }));
   await page.getByRole("button", { name: "Elegir de mi cava" }).click();
   await page.getByTestId("estado-sin_stock").waitFor();
+  cerradaCon(base, "sin_stock");
   await page.getByText("No tenés botellas disponibles").waitFor();
   await foto(page, "12-sin-stock-escritorio");
   await context.close();

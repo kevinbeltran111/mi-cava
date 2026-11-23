@@ -1,6 +1,12 @@
 # Etapa 7.4-B4 — Medición de entradas y consultas sin stock que terminan sin sesión
 
-**Estado: NO APLICADO.** Nada de este documento está implementado. Requiere una decisión antes de tocar el comportamiento aprobado en 7.4-B1 o el esquema.
+**Estado: APLICADA LA OPCIÓN A (2026-11-23, rama `etapa7-4-medicion-sin-candidatos`).** Sin migración. Una consulta nueva que termina en `sin_candidatos` registra una sesión cerrada (`status = 'completed'`, `ended_at`), sin ítems y sin motor, con `context = { entrada, tanda: 0, revision: 1, temporal: { restricciones: [] }, resultado: 'sin_candidatos', motivo }`. La respuesta conserva `estado` y `motivo` y agrega `sesionId`; si el registro falla, la respuesta sale igual sin `sesionId`. Refinar y reservar sobre esa sesión responden `409 sesion_inactiva`; los eventos, `409 sesion_sin_recomendaciones`. La opción B no se aplicó.
+
+**Conteo con la opción A:** entradas = sesiones `mode = 'cellar'` con `context->>'entrada' = 'elegir_de_mi_cava'`; entradas sin candidatos = las que además tienen `context->>'resultado' = 'sin_candidatos'`, desglosadas por `context->>'motivo'`; entradas con recomendación = el resto. Quedan fuera solo las entradas que fallaron antes de responder (red o 5xx) y las sin candidatos cuyo registro falló.
+
+---
+
+Texto original de la propuesta:
 
 ## Situación verificada
 

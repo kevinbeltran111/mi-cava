@@ -237,7 +237,9 @@ for (const [nombre, uid, motivo] of [
   ["vinos sin stock", S, "sin_stock"],
   ["lo disponible está excluido por una restricción confirmada", R, "excluidos_por_restriccion"],
 ]) {
-  test(`${nombre}: sin_candidatos ${motivo}, no llama al motor ni crea sesión`, { skip }, async () => {
+  // 7.4 (medición, opción A): sin motor y con una sesión CERRADA sin ítems.
+  test(`${nombre}: sin_candidatos ${motivo}, no llama al motor y registra una sesión cerrada sin ítems`, { skip }, async () => {
+    const antes = sesionesDe(uid);
     const { motor, llamadas } = motorSintetico([]);
     const r = await llamar({ token: tokenDe(uid), deps: { motor } });
     assert.equal(r.codigo, 200);
@@ -245,7 +247,12 @@ for (const [nombre, uid, motivo] of [
     assert.equal(r.cuerpo.motivo, motivo);
     assert.deepEqual(r.cuerpo.recomendaciones, []);
     assert.equal(llamadas.length, 0);
-    assert.equal(sesionesDe(uid), 0);
+    assert.equal(sesionesDe(uid), antes + 1);
+    const s = JSON.parse(sql(`select to_jsonb(s) from public.recommendation_sessions s where id = '${r.cuerpo.sesionId}'`));
+    assert.deepEqual([s.user_id, s.mode, s.status, s.ended_at !== null, s.initial_input, s.engine_version],
+      [uid, "cellar", "completed", true, null, null]);
+    assert.deepEqual(s.context, { entrada: "elegir_de_mi_cava", tanda: 0, revision: 1, temporal: { restricciones: [] }, resultado: "sin_candidatos", motivo });
+    assert.equal(sql(`select count(*) from public.recommendation_items where session_id = '${s.id}'`), "0");
   });
 }
 
@@ -937,6 +944,58 @@ test("7.4-B4 eventos: sin stock dentro de una consulta queda medido como new_bat
   } finally {
     for (const [wid, stock] of JSON.parse(original)) sql(`update public.wine_privado set stock = ${stock} where wine_id = '${wid}'`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// 7.4 — medición de consultas sin candidatos (opción A)
+// ---------------------------------------------------------------------------
+test("7.4 sin candidatos: reserva al entrar, sesión cerrada fuera del flujo, falla de registro y una sola sesión por consulta con recomendaciones", { skip }, async () => {
+  try {
+    // excluidos_por_reserva al entrar (O tiene un único vino disponible).
+    const t1 = await llamar({ token: tokenDe(O) });
+    await llamar({ token: tokenDe(O), body: reservar(t1.cuerpo.sesionId, itemDe(t1, WO)) });
+    const entrada = await llamar({ token: tokenDe(O) });
+    assert.deepEqual([entrada.cuerpo.estado, entrada.cuerpo.motivo], ["sin_candidatos", "excluidos_por_reserva"]);
+    const sid = entrada.cuerpo.sesionId;
+    assert.deepEqual(JSON.parse(sql(`select json_build_array(status, context->>'resultado', context->>'motivo') from public.recommendation_sessions where id = '${sid}'`)),
+      ["completed", "sin_candidatos", "excluidos_por_reserva"]);
+
+    // Fuera del flujo: ni refinar, ni reservar, ni eventos.
+    const antes = contarFilas();
+    const ref = await llamar({ token: tokenDe(O), body: excluir(sid, "Malbec") });
+    assert.deepEqual([ref.codigo, ref.cuerpo.codigo], [409, "sesion_inactiva"]);
+    const res = await llamar({ token: tokenDe(O), body: reservar(sid, itemDe(t1, WO)) });
+    assert.deepEqual([res.codigo, res.cuerpo.codigo], [409, "sesion_inactiva"]);
+    const ev = await llamar({ token: tokenDe(O), body: evento(sid, "new_batch", { origen: "refinamiento", tanda: null, resultado: "sin_candidatos", motivo: "sin_stock", filtros: [] }) });
+    assert.deepEqual([ev.codigo, ev.cuerpo.codigo], [409, "sesion_sin_recomendaciones"]);
+    assert.equal(contarFilas(), antes);
+
+    // Si el registro falla, la respuesta sin_candidatos sale igual, sin sesionId.
+    const crearCliente = (url, key, opts) =>
+      createClient(url, key, {
+        ...opts,
+        global: {
+          ...(opts?.global || {}),
+          fetch: async (input, init) =>
+            String(input).includes("/rest/v1/recommendation_sessions") && init?.method === "POST"
+              ? Promise.reject(new TypeError("fetch failed"))
+              : fetch(input, init),
+        },
+      });
+    const sesionesO = sesionesDe(O);
+    const sinRegistro = await llamar({ token: tokenDe(O), deps: { crearCliente } });
+    assert.deepEqual([sinRegistro.codigo, sinRegistro.cuerpo.estado, sinRegistro.cuerpo.motivo, sinRegistro.cuerpo.sesionId],
+      [200, "sin_candidatos", "excluidos_por_reserva", undefined]);
+    assert.equal(sesionesDe(O), sesionesO);
+  } finally {
+    liberarReservas(O, [WO]);
+  }
+  // Una consulta con recomendaciones se registra una sola vez (sesión activa con ítems).
+  const sesionesX = sesionesDe(X);
+  const ok = await llamar({ token: tokenDe(X) });
+  assert.equal(ok.cuerpo.estado, "ok");
+  assert.equal(sesionesDe(X), sesionesX + 1);
+  assert.equal(sql(`select status from public.recommendation_sessions where id = '${ok.cuerpo.sesionId}'`), "active");
 });
 
 // Último: ni 7.3-A ni 7.4-B1/B2/B3 modificaron vinos, stock, consumos,

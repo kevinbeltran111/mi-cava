@@ -39,9 +39,13 @@
 //   3. Contexto personal: lectura con el token del usuario (RLS).
 //   4. Selección única (prepararCellar → 7.3-B): vinos propios con stock que
 //      superan las restricciones confirmadas.
-//   5. Sin candidatos → 200 { estado: "sin_candidatos", motivo } sin llamar
-//      al motor ni crear sesión. motivo: biblioteca_vacia | sin_stock |
-//      excluidos_por_restriccion.
+//   5. Sin candidatos → 200 { estado: "sin_candidatos", motivo, sesionId? }
+//      sin llamar al motor. motivo: biblioteca_vacia | sin_stock |
+//      excluidos_por_restriccion | excluidos_por_reserva. Para la medición
+//      se registra una sesión CERRADA sin ítems (context.resultado =
+//      "sin_candidatos", context.motivo); queda fuera de refinar, reservar
+//      y de los eventos. Si el registro falla, la respuesta sale igual sin
+//      sesionId.
 //   6. Motor (motorCellar): recibe SOLO los candidatos elegibles.
 //   7. Salida validada contra esos candidatos; recién entonces se crean la
 //      sesión y los items de la tanda 1 con service_role.
@@ -63,7 +67,7 @@ import { prepararCellar } from "./_que-tomo/motor_cellar.js";
 import {
   crearSesion, registrarItems, cerrarSesion, leerSesion, actualizarContextoSesion,
   leerItem, vinoPropio, leerReserva, guardarReserva, revocarReserva,
-  leerItemsDeSesion, leerConsumoPropio, insertarEventos,
+  leerItemsDeSesion, leerConsumoPropio, insertarEventos, registrarSesionSinCandidatos,
 } from "./_que-tomo/sesiones.js";
 import { validarEvento, filasDeEvento } from "./_que-tomo/eventos.js";
 import { MARCA_RESERVA, idReserva, filaReserva } from "./_que-tomo/conocimiento/reserva.js";
@@ -236,10 +240,28 @@ export function crearHandler(deps = {}) {
     if (!sesion) {
       const prep = preparar(ctx.contexto, []);
       if (!prep?.ok) return responder(res, 500, { error: "No se pudo preparar la recomendación", codigo: "seleccion_error" });
-      // Sin candidatos: respuesta de hecho, sin motor ni sesión.
+      // Sin candidatos: respuesta de hecho, sin motor. Para la medición se
+      // registra una sesión CERRADA sin ítems (opción A aprobada). Si ese
+      // registro falla, la respuesta sin_candidatos se entrega igual (sin
+      // sesionId): la medición nunca bloquea a la persona.
       if (prep.sinCandidatos) {
+        const motivo = prep.sinCandidatos.motivo;
+        const r = await registrarSesionSinCandidatos(admin(), {
+          userId,
+          modo,
+          contexto: {
+            ...contextoDeSesion({ entrada: "elegir_de_mi_cava" }, { tanda: 0, revision: 1, filtros: [] }),
+            resultado: "sin_candidatos",
+            motivo,
+          },
+        });
         return responder(res, 200, {
-          estado: "sin_candidatos", motivo: prep.sinCandidatos.motivo, recomendaciones: [], filtros: [], biblioteca: resumenBiblioteca(ctx.contexto, prep),
+          estado: "sin_candidatos",
+          motivo,
+          ...(r.ok ? { sesionId: r.sesion.id } : {}),
+          recomendaciones: [],
+          filtros: [],
+          biblioteca: resumenBiblioteca(ctx.contexto, prep),
         });
       }
       const m = await correrMotor(motor, prep, consulta, modo, tiempoLimiteMotorMs);
@@ -400,6 +422,9 @@ async function registrarEvento({ userClient, admin, userId, ev }) {
   const l = await leerSesion(userClient, ev.sesionId);
   if (!l.ok) return { status: 503, cuerpo: { error: l.error.mensaje, codigo: "evento_no_registrado" } };
   if (!l.sesion || l.sesion.user_id !== userId) return noEncontrado("sesion_no_encontrada", "No encontramos esa consulta.");
+  if (l.sesion.context?.resultado === "sin_candidatos") {
+    return { status: 409, cuerpo: { error: "Esa consulta no tuvo recomendaciones.", codigo: "sesion_sin_recomendaciones" } };
+  }
 
   const li = await leerItemsDeSesion(userClient, ev.sesionId);
   if (!li.ok) return { status: 503, cuerpo: { error: li.error.mensaje, codigo: "evento_no_registrado" } };

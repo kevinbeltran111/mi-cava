@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { crearHandler } from "../../api/que-tomo.js";
 import { motorCellar, explicar } from "../../api/_que-tomo/motor_cellar.js";
-import { crearBase, resFalsa, ENTORNO } from "./supabase_en_memoria.mjs";
+import { crearBase, resFalsa, ENTORNO, USUARIO } from "./supabase_en_memoria.mjs";
 
 const v = (n) => `c7400000-0000-0000-0000-${String(n).padStart(12, "0")}`;
 const PREF = {
@@ -24,13 +24,21 @@ async function llamar(escenario, body = { modo: "cellar" }) {
 }
 const tablasEscritas = (base) => [...new Set(base.escrituras.map((e) => e.tabla))].sort();
 
+// 7.4 (medición, opción A): sin motor, y una sola escritura: la sesión
+// CERRADA sin ítems que permite contar la consulta.
 function sinCandidatos({ res, base, llamadas }, motivo) {
   assert.equal(res.codigo, 200);
   assert.equal(res.cuerpo.estado, "sin_candidatos");
   assert.equal(res.cuerpo.motivo, motivo);
   assert.deepEqual(res.cuerpo.recomendaciones, []);
   assert.equal(llamadas.length, 0, "no se invoca el motor");
-  assert.deepEqual(base.escrituras, [], "no se crea sesión");
+  assert.deepEqual(base.escrituras.map((w) => `${w.tabla}:${w.op}`), ["recommendation_sessions:insert"]);
+  const [s] = base.tablas.recommendation_sessions;
+  assert.deepEqual([s.id, s.user_id, s.mode, s.status, s.initial_input, s.engine_version, s.model, s.ended_at],
+    [res.cuerpo.sesionId, USUARIO, "cellar", "completed", null, null, null, "now"]);
+  assert.deepEqual(s.context, { entrada: "elegir_de_mi_cava", tanda: 0, revision: 1, temporal: { restricciones: [] }, resultado: "sin_candidatos", motivo });
+  assert.equal(base.tablas.recommendation_items.length, 0);
+  assert.equal(base.tablas.recommendation_events.length, 0);
 }
 
 test("0 elegibles: biblioteca vacía → sin_candidatos biblioteca_vacia", async () => {
@@ -49,6 +57,48 @@ test("0 elegibles: todo lo disponible lo excluye una restricción confirmada →
   });
   sinCandidatos(r, "excluidos_por_restriccion");
   assert.equal(r.res.cuerpo.biblioteca.excluidosPorRestriccion, 1);
+});
+
+test("todo lo disponible reservado → sin_candidatos excluidos_por_reserva, registrado como sesión cerrada", async () => {
+  sinCandidatos(await llamar({
+    preferencias: PREF,
+    vinos: [{ id: v(1), nombre: "Reservado", varietal: "Malbec", stock: 2 }, { id: v(2), nombre: "Sin stock", stock: 0 }],
+    conocimiento: [{ id: "k1", knowledge_type: "explicit", scope_type: "wine", wine_id: v(1), wine_snapshot: { nombre: "Reservado" }, meaning: "Reservado para una ocasión especial", value: { marca: "reserva", motivo: "ocasion_especial", version: 1 }, source_type: "recommender" }],
+  }), "excluidos_por_reserva");
+});
+
+test("si falla el registro de la sesión cerrada, la respuesta sin_candidatos sale igual (sin sesionId)", async () => {
+  const base = crearBase({ preferencias: PREF, vinos: [{ id: v(1), nombre: "Sin stock", stock: 0 }] });
+  base.fallar("recommendation_sessions:insert");
+  const res = resFalsa();
+  const llamadas = [];
+  await crearHandler({ entorno: ENTORNO, crearCliente: base.crearCliente, motor: (e) => { llamadas.push(e); return motorCellar(e); } })(
+    { method: "POST", headers: AUTH, body: { modo: "cellar" } }, res);
+  assert.equal(res.codigo, 200);
+  assert.deepEqual([res.cuerpo.estado, res.cuerpo.motivo, res.cuerpo.sesionId], ["sin_candidatos", "sin_stock", undefined]);
+  assert.equal(llamadas.length, 0);
+  assert.equal(base.tablas.recommendation_sessions.length, 0);
+});
+
+test("la sesión cerrada de una consulta sin candidatos queda fuera del refinamiento, la reserva y los eventos", async () => {
+  const { res, base } = await llamar({ preferencias: PREF, vinos: [{ id: v(1), nombre: "Sin stock", varietal: "Malbec", stock: 0 }] });
+  const sid = res.cuerpo.sesionId;
+  const pedir = async (body) => {
+    const r = resFalsa();
+    await crearHandler({ entorno: ENTORNO, crearCliente: base.crearCliente, motor: motorCellar })({ method: "POST", headers: AUTH, body }, r);
+    return r;
+  };
+  const antes = base.escrituras.length;
+  for (const [body, codigo, cod] of [
+    [{ modo: "cellar", sesionId: sid, restriccion: { alcance: { tipo: "grape", valor: "Malbec" } } }, 409, "sesion_inactiva"],
+    [{ accion: "reservar", modo: "cellar", sesionId: sid, itemId: "bbbbbbbb-0000-4000-8000-000000000001" }, 409, "sesion_inactiva"],
+    [{ accion: "evento", sesionId: sid, tipo: "new_batch", origen: "refinamiento", tanda: null, resultado: "sin_candidatos", motivo: "sin_stock", filtros: [] }, 409, "sesion_sin_recomendaciones"],
+  ]) {
+    const r = await pedir(body);
+    assert.deepEqual([r.codigo, r.cuerpo.codigo], [codigo, cod], JSON.stringify(body).slice(0, 50));
+  }
+  assert.equal(base.escrituras.length, antes);
+  assert.equal(base.tablas.recommendation_sessions[0].context.revision, 1);
 });
 
 test("1, 2 y 3 o más elegibles: 1, 2 y 3 recomendaciones registradas como tanda 1", async () => {
