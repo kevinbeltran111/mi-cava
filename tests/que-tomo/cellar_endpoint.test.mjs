@@ -124,7 +124,7 @@ test("respuesta, sesión e items: principal + alternativas, exploración, explic
   const s = base.tablas.recommendation_sessions[0];
   assert.deepEqual([s.user_id, s.mode, s.status, s.initial_input, s.engine_version, s.model],
     [base.tablas.profiles[0].id, "cellar", "active", null, "7.4-B1.1", null]);
-  assert.deepEqual(s.context, { entrada: "elegir_de_mi_cava", tanda: 1 });
+  assert.deepEqual(s.context, { entrada: "elegir_de_mi_cava", tanda: 1, revision: 1, temporal: { restricciones: [] } });
 
   const items = base.tablas.recommendation_items;
   assert.equal(items.every((i) => i.session_id === s.id && i.batch_no === 1 && i.relationship === "owned"), true);

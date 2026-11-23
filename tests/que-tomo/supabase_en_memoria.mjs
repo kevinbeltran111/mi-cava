@@ -3,8 +3,13 @@
 //   lectura   from(t).select(c).eq(k, v)[.order()][.range(a, b)|.maybeSingle()]
 //   escritura from(t).insert(filas).select(c)[.single()]
 //             from(t).update(v).eq(k, v).eq(k, v).select(c)
-// Cada cliente filtra por user_id como lo haría RLS para el usuario del token
-// (no hay datos de otros usuarios en estos escenarios, pero se respeta).
+// 7.4-B2: además
+//   from(t).update(v)...is(k, null) y filtros sobre JSON ("context->>revision")
+//   RLS en lecturas de recommendation_sessions con el cliente del usuario
+//   (cualquier clave distinta de la service_role): solo ve las propias.
+//   barrera(n): las primeras n actualizaciones de recommendation_sessions
+//   esperan a que lleguen todas, para forzar pedidos simultáneos que leyeron
+//   la misma revisión.
 // Registra cada escritura en `escrituras` para verificar qué tablas se tocan.
 import crypto from "node:crypto";
 
@@ -34,7 +39,23 @@ export function crearBase(escenario) {
     recommendation_events: [],
   };
   const escrituras = [];
-  return { tablas, escrituras, crearCliente: () => clienteFalso(tablas, escrituras) };
+  const control = { barrera: null };
+  return {
+    tablas, escrituras,
+    barrera(n) {
+      let liberar;
+      const abierta = new Promise((r) => { liberar = r; });
+      control.barrera = { faltan: n, abierta, liberar };
+    },
+    crearCliente: (_url, clave) => clienteFalso(tablas, escrituras, { admin: clave === ENTORNO.SUPABASE_SERVICE_ROLE_KEY, control }),
+  };
+}
+
+function valorDe(fila, k) {
+  const m = /^(\w+)->>(\w+)$/.exec(k);
+  if (!m) return fila[k];
+  const v = fila[m[1]]?.[m[2]];
+  return v === undefined || v === null ? null : String(v);
 }
 
 function proyectar(fila, cols) {
@@ -42,7 +63,7 @@ function proyectar(fila, cols) {
   return Object.fromEntries(cols.split(",").map((c) => c.trim()).map((c) => [c, fila[c] ?? null]));
 }
 
-function clienteFalso(tablas, escrituras) {
+function clienteFalso(tablas, escrituras, { admin, control }) {
   return {
     auth: {
       async getUser(t) {
@@ -58,6 +79,7 @@ function clienteFalso(tablas, escrituras) {
       const q = {
         select(c) { cols = c; return q; },
         eq(k, v) { filtros.push([k, v]); return q; },
+        is(k, v) { filtros.push([k, v]); return q; },
         order() { return q; },
         range(a, b) { rango = [a, b]; return q; },
         insert(filas) { op = "insert"; carga = Array.isArray(filas) ? filas : [filas]; return q; },
@@ -75,9 +97,16 @@ function clienteFalso(tablas, escrituras) {
           escrituras.push({ tabla, op, filas: nuevas });
           return { data: nuevas.map((f) => proyectar(f, cols)), error: null };
         }
-        const coinciden = t.filter((f) => filtros.every(([k, v]) => f[k] === v));
+        if (op === "update" && tabla === "recommendation_sessions" && control.barrera && control.barrera.faltan > 0) {
+          const b = control.barrera;
+          b.faltan -= 1;
+          if (b.faltan === 0) b.liberar();
+          await b.abierta;
+        }
+        let coinciden = t.filter((f) => filtros.every(([k, v]) => valorDe(f, k) === v));
+        if (!admin && op === "select" && tabla === "recommendation_sessions") coinciden = coinciden.filter((f) => f.user_id === USUARIO);
         if (op === "update") {
-          for (const f of coinciden) Object.assign(f, carga);
+          for (const f of coinciden) Object.assign(f, structuredClone(carga));
           escrituras.push({ tabla, op, filas: coinciden });
           return { data: coinciden.map((f) => proyectar(f, cols)), error: null };
         }

@@ -83,3 +83,50 @@ export async function cerrarSesion(admin, sessionId, estado) {
     return clasificarError(e, "No se pudo cerrar la sesión.");
   }
 }
+
+// -----------------------------------------------------------------------------
+// 7.4-B2: refinamiento dentro de la misma sesión.
+// -----------------------------------------------------------------------------
+
+// Lee una sesión con el cliente DEL USUARIO (RLS: solo ve las propias). Una
+// sesión ajena e inexistente dan el mismo resultado (sesion: null), para no
+// revelar que existe. El endpoint compara además user_id con el del token.
+export async function leerSesion(cliente, sesionId) {
+  try {
+    const { data, error } = await cliente
+      .from("recommendation_sessions")
+      .select("id,user_id,mode,status,context")
+      .eq("id", sesionId)
+      .maybeSingle();
+    if (error) return clasificarError(error, "No se pudo leer la consulta.");
+    return { ok: true, sesion: data ?? null };
+  } catch (e) {
+    return clasificarError(e, "No se pudo leer la consulta.");
+  }
+}
+
+// Escritura condicionada (control optimista de concurrencia, sin migración):
+// actualiza `context` SOLO si la sesión sigue siendo del usuario, sigue
+// activa y su context.revision es la que se leyó. PostgreSQL evalúa el WHERE
+// sobre la versión vigente de la fila, así que de dos escrituras simultáneas
+// con la misma revisión gana una y la otra no actualiza ninguna fila
+// (actualizada: false) y debe releer y reintentar.
+// revisionEsperada null = sesión sin contador (creada antes de 7.4-B2).
+export async function actualizarContextoSesion(admin, { sesionId, userId, revisionEsperada, contexto }) {
+  try {
+    let q = admin
+      .from("recommendation_sessions")
+      .update({ context: contexto })
+      .eq("id", sesionId)
+      .eq("user_id", userId)
+      .eq("status", "active");
+    q = revisionEsperada === null
+      ? q.is("context->>revision", null)
+      : q.eq("context->>revision", String(revisionEsperada));
+    const { data, error } = await q.select("id,context");
+    if (error) return clasificarError(error, "No se pudo actualizar la consulta.");
+    return { ok: true, actualizada: Array.isArray(data) && data.length === 1 };
+  } catch (e) {
+    return clasificarError(e, "No se pudo actualizar la consulta.");
+  }
+}

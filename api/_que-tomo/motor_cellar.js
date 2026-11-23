@@ -6,9 +6,10 @@
 //   prepararCellar(contexto)  → la ÚNICA selección de candidatos. Reutiliza
 //       7.3-B (construirConocimiento + seleccionarParaConsulta, modo
 //       'cellar'): solo vinos propios con stock > 0 que no alcanza ninguna
-//       restricción CONFIRMADA. Si no queda ninguno devuelve el motivo
-//       (biblioteca_vacia | sin_stock | excluidos_por_restriccion) y el
-//       endpoint responde sin llamar al motor ni crear sesión.
+//       restricción CONFIRMADA, persistente o temporal (7.4-B2: filtros de la
+//       sesión). Si no queda ninguno devuelve el motivo (biblioteca_vacia |
+//       sin_stock | excluidos_por_restriccion | excluidos_por_filtro) y el
+//       endpoint responde sin llamar al motor.
 //
 //   motorCellar(entrada)      → ordena esos candidatos y redacta las
 //       explicaciones con reglas fijas. No vuelve a seleccionar, no lee la
@@ -61,7 +62,11 @@ export const UMBRAL_BUENA_PUNTUACION = 4;
 export const MOTIVOS_SIN_CANDIDATOS = Object.freeze({
   BIBLIOTECA_VACIA: "biblioteca_vacia",
   SIN_STOCK: "sin_stock",
+  // todo lo disponible lo excluyen restricciones PERSISTENTES del usuario
   EXCLUIDOS: "excluidos_por_restriccion",
+  // 7.4-B2: hay vinos disponibles que solo excluye un filtro TEMPORAL de la
+  // sesión («hoy no quiero Malbec»); sin ese filtro habría candidatos
+  EXCLUIDOS_POR_FILTRO: "excluidos_por_filtro",
 });
 
 const GRUPO = Object.freeze({ BUENA: 2, SIN_PUNTUAR: 1, BAJA: 0 });
@@ -70,13 +75,15 @@ const GRUPO = Object.freeze({ BUENA: 2, SIN_PUNTUAR: 1, BAJA: 0 });
 // 1. Selección (una sola vez, en el endpoint)
 // -----------------------------------------------------------------------------
 
-// contexto: representarContexto (7.3-A).
+// contexto: representarContexto (7.3-A). temporal: entrada de
+// normalizarContextoTemporal (7.4-B2: filtros de la sesión; vacío en una
+// consulta nueva).
 // → { ok: true, sinCandidatos: { motivo, ... } }
 // | { ok: true, entrada: { modo, candidatos, preferencias } }
 // | fallo
-export function prepararCellar(contexto) {
+export function prepararCellar(contexto, { temporal = {} } = {}) {
   const { perfil, extraccion } = construirConocimiento(contexto);
-  const sel = seleccionarParaConsulta({ contexto, perfil, extraccion }, { modo: MODO_CELLAR, temporal: {} });
+  const sel = seleccionarParaConsulta({ contexto, perfil, extraccion }, { modo: MODO_CELLAR, temporal });
   if (!sel.ok) return sel;
   const s = sel.seleccion;
   const biblioteca = contexto?.biblioteca || [];
@@ -100,12 +107,21 @@ export function prepararCellar(contexto) {
 
   if (!candidatos.length) {
     const disponibles = biblioteca.filter((v) => v.hechos.disponibilidad.disponible).length;
+    // Sin candidatos y con stock: todo lo disponible quedó excluido. Si algún
+    // vino lo excluye SOLO un filtro temporal, sin el filtro habría
+    // candidatos → el motivo es el filtro, no la cava.
+    const soloPorFiltro = s.excluidos.filter((x) => x.motivos.every((m) => m.origen === "temporal")).length;
     const motivo = biblioteca.length === 0
       ? MOTIVOS_SIN_CANDIDATOS.BIBLIOTECA_VACIA
       : disponibles === 0
         ? MOTIVOS_SIN_CANDIDATOS.SIN_STOCK
-        : MOTIVOS_SIN_CANDIDATOS.EXCLUIDOS;
-    return { ok: true, sinCandidatos: { motivo, excluidosPorRestriccion: s.excluidos.length } };
+        : soloPorFiltro > 0
+          ? MOTIVOS_SIN_CANDIDATOS.EXCLUIDOS_POR_FILTRO
+          : MOTIVOS_SIN_CANDIDATOS.EXCLUIDOS;
+    return {
+      ok: true,
+      sinCandidatos: { motivo, excluidosPorRestriccion: s.excluidos.length - soloPorFiltro, excluidosPorFiltro: soloPorFiltro },
+    };
   }
 
   const declaradas = perfil.declarado?.registrada ? [...(perfil.declarado.variedades || [])] : [];

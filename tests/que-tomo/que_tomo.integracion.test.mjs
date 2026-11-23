@@ -339,7 +339,7 @@ test("motor sintético: sesión e items reales, identidad desde la base, consult
   assert.equal(s.mode, "cellar");
   assert.equal(s.status, "active");
   assert.equal(s.initial_input, null);
-  assert.deepEqual(s.context, { prueba: true });
+  assert.deepEqual(s.context, { prueba: true, tanda: 1, revision: 1, temporal: { restricciones: [] } });
   assert.equal(s.engine_version, "prueba-7.3-A");
 
   const items = JSON.parse(sql(`select json_agg(to_jsonb(i) order by position) from public.recommendation_items i where session_id = '${r.cuerpo.sesionId}'`));
@@ -485,7 +485,7 @@ test("3 o más elegibles (M): orden de confianza, exploración, restricción de 
   const s = JSON.parse(sql(`select to_jsonb(s) from public.recommendation_sessions s where id = '${c.sesionId}'`));
   assert.deepEqual([s.user_id, s.mode, s.status, s.initial_input, s.engine_version, s.model, s.context_sufficiency],
     [M, "cellar", "active", null, "7.4-B1.1", null, null]);
-  assert.deepEqual(s.context, { entrada: "elegir_de_mi_cava", tanda: 1 });
+  assert.deepEqual(s.context, { entrada: "elegir_de_mi_cava", tanda: 1, revision: 1, temporal: { restricciones: [] } });
   const items = itemsDe(c.sesionId);
   assert.deepEqual(items.map((i) => [i.batch_no, i.position, i.relationship, i.wine_id]),
     [[1, 1, "owned", WM.favorito], [1, 2, "owned", WM.seisBotellas], [1, 3, "owned", WM.paraExplorar]]);
@@ -514,7 +514,134 @@ test("M: cambiar los precios no altera la recomendación (se restauran al final)
   }
 });
 
-// Último: ni 7.3-A ni 7.4-B1 modificaron vinos, stock, consumos,
+// ---------------------------------------------------------------------------
+// 7.4-B2: refinamiento por variedad en la misma sesión
+// ---------------------------------------------------------------------------
+const excluir = (sesionId, valor) => ({ modo: "cellar", sesionId, restriccion: { alcance: { tipo: "grape", valor } } });
+const ctxSesion = (id) => JSON.parse(sql(`select context from public.recommendation_sessions where id = '${id}'`));
+const tandasDe = (id) => JSON.parse(sql(`select coalesce(json_agg(distinct batch_no order by batch_no), '[]') from public.recommendation_items where session_id = '${id}'`));
+const contarFilas = () => sql(`select (select count(*) from public.recommendation_sessions) || '|' || (select count(*) from public.recommendation_items) || '|' || (select count(*) from public.user_knowledge) || '|' || (select count(*) from public.recommendation_events)`);
+const idsDe = (r) => r.cuerpo.recomendaciones.map((x) => x.wineId);
+
+test("7.4-B2 recorrido (M): tanda 1 con Malbec → excluido en la tanda 2 → una consulta nueva lo vuelve a ofrecer", { skip }, async () => {
+  const conocimientoAntes = sql("select count(*) || '|' || (select count(*) from public.recommendation_events) from public.user_knowledge");
+  const t1 = await llamar({ token: tokenDe(M) });
+  assert.equal(t1.codigo, 200, JSON.stringify(t1.cuerpo));
+  assert.equal(idsDe(t1).includes(WM.seisBotellas), true, "la tanda 1 incluye el Malbec");
+  const sid = t1.cuerpo.sesionId;
+
+  const t2 = await llamar({ token: tokenDe(M), body: excluir(sid, "Malbec") });
+  assert.equal(t2.codigo, 200, JSON.stringify(t2.cuerpo));
+  assert.deepEqual([t2.cuerpo.sesionId, t2.cuerpo.tanda], [sid, 2]);
+  assert.deepEqual(t2.cuerpo.filtros, [{ tipo: "grape", clave: "malbec", etiqueta: "Malbec" }]);
+  assert.deepEqual(idsDe(t2), [WM.favorito, WM.bienPuntuado, WM.paraExplorar]);
+  assert.equal(t2.cuerpo.recomendaciones[0].explicacion, "Lo marcaste como favorito. Lo puntuaste con 4,5 estrellas.");
+  assert.deepEqual(ctxSesion(sid), { entrada: "elegir_de_mi_cava", tanda: 2, revision: 2, temporal: { restricciones: [{ tipo: "grape", clave: "malbec" }] } });
+  assert.deepEqual(tandasDe(sid), [1, 2]);
+  const items2 = itemsDe(sid).filter((i) => i.batch_no === 2);
+  assert.deepEqual(items2.map((i) => [i.position, i.wine_id]), [[1, WM.favorito], [2, WM.bienPuntuado], [3, WM.paraExplorar]]);
+  for (const i of items2) assert.equal(explicar(i.grounding.afirmaciones), t2.cuerpo.recomendaciones[i.position - 1].explicacion);
+
+  const nueva = await llamar({ token: tokenDe(M) });
+  assert.notEqual(nueva.cuerpo.sesionId, sid);
+  assert.deepEqual([nueva.cuerpo.tanda, nueva.cuerpo.filtros], [1, []]);
+  assert.equal(idsDe(nueva).includes(WM.seisBotellas), true, "sin filtros el Malbec vuelve");
+  assert.equal(sql("select count(*) || '|' || (select count(*) from public.recommendation_events) from public.user_knowledge"), conocimientoAntes,
+    "el refinamiento no escribe user_knowledge ni recommendation_events");
+});
+
+test("7.4-B2 filtros acumulados (M): Malbec + Merlot en la tanda 3; repetir no duplica", { skip }, async () => {
+  const sid = (await llamar({ token: tokenDe(M) })).cuerpo.sesionId;
+  await llamar({ token: tokenDe(M), body: excluir(sid, "malbec") });
+  const t3 = await llamar({ token: tokenDe(M), body: excluir(sid, "Merlot") });
+  assert.equal(t3.cuerpo.tanda, 3);
+  assert.deepEqual(t3.cuerpo.filtros.map((f) => f.clave), ["malbec", "merlot"]);
+  assert.equal(idsDe(t3).some((id) => [WM.favorito, WM.seisBotellas].includes(id)), false);
+  const t4 = await llamar({ token: tokenDe(M), body: excluir(sid, "Malbec") });
+  assert.equal(t4.cuerpo.tanda, 4);
+  assert.deepEqual(ctxSesion(sid).temporal.restricciones.map((f) => f.clave), ["malbec", "merlot"]);
+  assert.deepEqual(tandasDe(sid), [1, 2, 3, 4]);
+});
+
+test("7.4-B2 cero candidatos (X): excluidos_por_filtro conserva sesión y filtros; sin stock es otro motivo", { skip }, async () => {
+  const sid = (await llamar({ token: tokenDe(X) })).cuerpo.sesionId;
+  const a = await llamar({ token: tokenDe(X), body: excluir(sid, "Malbec") });
+  assert.equal(a.cuerpo.tanda, 2);
+  const b = await llamar({ token: tokenDe(X), body: excluir(sid, "Cabernet Franc") });
+  assert.equal(b.codigo, 200);
+  assert.deepEqual([b.cuerpo.estado, b.cuerpo.motivo, b.cuerpo.sesionId, b.cuerpo.tanda], ["sin_candidatos", "excluidos_por_filtro", sid, null]);
+  assert.deepEqual(b.cuerpo.filtros.map((f) => f.clave), ["malbec", "cabernet_franc"]);
+  assert.deepEqual(ctxSesion(sid), { entrada: "elegir_de_mi_cava", tanda: 2, revision: 3, temporal: { restricciones: [{ tipo: "grape", clave: "malbec" }, { tipo: "grape", clave: "cabernet_franc" }] } });
+  assert.equal(sql(`select status from public.recommendation_sessions where id = '${sid}'`), "active");
+  assert.deepEqual(tandasDe(sid), [1, 2]);
+
+  const original = sql(`select json_agg(json_build_array(wine_id, stock)) from public.wine_privado where user_id = '${X}'`);
+  sql(`update public.wine_privado set stock = 0 where user_id = '${X}'`);
+  try {
+    const c = await llamar({ token: tokenDe(X), body: excluir(sid, "Syrah") });
+    assert.deepEqual([c.cuerpo.estado, c.cuerpo.motivo], ["sin_candidatos", "sin_stock"]);
+  } finally {
+    for (const [wid, stock] of JSON.parse(original)) sql(`update public.wine_privado set stock = ${stock} where wine_id = '${wid}'`);
+  }
+});
+
+test("7.4-B2 stock vigente (X): lo agotado sale y lo repuesto entra en la tanda siguiente", { skip }, async () => {
+  const sid = (await llamar({ token: tokenDe(X) })).cuerpo.sesionId;
+  const original = sql(`select json_agg(json_build_array(wine_id, stock)) from public.wine_privado where user_id = '${X}'`);
+  sql(`update public.wine_privado set stock = 0 where wine_id = '${WX.stockSinTomar}'`);
+  sql(`update public.wine_privado set stock = 2 where wine_id = '${WX.tomadoSinPuntuar}'`);
+  try {
+    const r = await llamar({ token: tokenDe(X), body: excluir(sid, "Malbec") });
+    assert.equal(r.codigo, 200, JSON.stringify(r.cuerpo));
+    assert.deepEqual(idsDe(r), [WX.tomadoSinPuntuar]);
+    assert.equal(r.cuerpo.recomendaciones[0].stock, 2);
+  } finally {
+    for (const [wid, stock] of JSON.parse(original)) sql(`update public.wine_privado set stock = ${stock} where wine_id = '${wid}'`);
+  }
+});
+
+test("7.4-B2 sesión ajena, inactiva o entrada inválida: rechazo sin escrituras", { skip }, async () => {
+  const sid = (await llamar({ token: tokenDe(X) })).cuerpo.sesionId;
+  const cerrada = (await llamar({ token: tokenDe(X) })).cuerpo.sesionId;
+  sql(`update public.recommendation_sessions set status = 'completed', ended_at = now() where id = '${cerrada}'`);
+  const antes = contarFilas();
+  const ctxAntes = ctxSesion(sid);
+  for (const [token, body, codigo, cod] of [
+    [tokenDe(Y), excluir(sid, "Malbec"), 404, "sesion_no_encontrada"],
+    [tokenDe(X), excluir("aaaaaaaa-0000-4000-8000-00000000ffff", "Malbec"), 404, "sesion_no_encontrada"],
+    [tokenDe(X), excluir(cerrada, "Malbec"), 409, "sesion_inactiva"],
+    [tokenDe(X), excluir("no-es-uuid", "Malbec"), 400, "sesion_invalida"],
+    [tokenDe(X), excluir(sid, "Cabernet"), 400, "restriccion_invalida"],
+    [tokenDe(X), { modo: "cellar", sesionId: sid, restriccion: { alcance: { tipo: "winery", valor: "Bodega Uno" } } }, 400, "restriccion_invalida"],
+    [tokenDe(X), { modo: "cellar", restriccion: { alcance: { tipo: "grape", valor: "Malbec" } } }, 400, "sesion_requerida"],
+    [tokenDe(X), { ...excluir(sid, "Malbec"), consulta: "hoy no quiero Malbec" }, 400, "refinamiento_no_disponible"],
+  ]) {
+    const r = await llamar({ token, body });
+    assert.equal(r.codigo, codigo, cod);
+    assert.equal(r.cuerpo.codigo, cod);
+  }
+  assert.equal(contarFilas(), antes);
+  assert.deepEqual(ctxSesion(sid), ctxAntes);
+});
+
+test("7.4-B2 solicitudes simultáneas (M): cuatro filtros a la vez, ninguno se pierde y las tandas no se repiten", { skip }, async () => {
+  const sid = (await llamar({ token: tokenDe(M) })).cuerpo.sesionId;
+  const variedades = ["Malbec", "Merlot", "Syrah", "Tempranillo"];
+  const rs = await Promise.all(variedades.map((x) => llamar({ token: tokenDe(M), body: excluir(sid, x) })));
+  for (const r of rs) assert.equal(r.codigo, 200, JSON.stringify(r.cuerpo));
+  assert.deepEqual(rs.map((r) => r.cuerpo.tanda).sort(), [2, 3, 4, 5]);
+  const ctx = ctxSesion(sid);
+  assert.deepEqual(ctx.temporal.restricciones.map((f) => f.clave).sort(), ["malbec", "merlot", "syrah", "tempranillo"]);
+  assert.deepEqual([ctx.tanda, ctx.revision], [5, 5]);
+  assert.deepEqual(tandasDe(sid), [1, 2, 3, 4, 5]);
+  const duplicadas = sql(`select count(*) from (select batch_no, position from public.recommendation_items where session_id = '${sid}' group by 1, 2 having count(*) > 1) d`);
+  assert.equal(duplicadas, "0");
+  // La última tanda ya aplica los cuatro filtros: solo queda el Pinot Noir.
+  const ultima = rs.find((r) => r.cuerpo.tanda === 5);
+  assert.deepEqual(idsDe(ultima), [WM.paraExplorar]);
+});
+
+// Último: ni 7.3-A ni 7.4-B1/B2 modificaron vinos, stock, consumos,
 // preferencias, conocimiento ni eventos.
 test("integridad: no se escribió user_knowledge, eventos ni datos de la biblioteca", { skip }, async () => {
   assert.equal(huellaIntegridad(), estadoInicial);
