@@ -217,3 +217,47 @@ export async function revocarReserva(admin, { userId, wineId, marca }) {
     return clasificarError(e, "No se pudo quitar la reserva.");
   }
 }
+
+// -----------------------------------------------------------------------------
+// 7.4-B4: medición (eventos.js).
+// -----------------------------------------------------------------------------
+
+// Ítems de una sesión, con el cliente DEL USUARIO (RLS).
+export async function leerItemsDeSesion(cliente, sesionId) {
+  try {
+    const { data, error } = await cliente
+      .from("recommendation_items")
+      .select("id,session_id,batch_no,position,wine_id")
+      .eq("session_id", sesionId);
+    if (error) return clasificarError(error, "No se pudieron leer las recomendaciones.");
+    return { ok: true, items: data || [] };
+  } catch (e) {
+    return clasificarError(e, "No se pudieron leer las recomendaciones.");
+  }
+}
+
+// Consumo propio (cliente del usuario + filtro explícito por user_id).
+export async function leerConsumoPropio(cliente, { consumoId, userId }) {
+  try {
+    const { data, error } = await cliente.from("consumos").select("id,wine_id").eq("id", consumoId).eq("user_id", userId).maybeSingle();
+    if (error) return clasificarError(error, "No se pudo verificar la apertura.");
+    return { ok: true, consumo: data ?? null };
+  } catch (e) {
+    return clasificarError(e, "No se pudo verificar la apertura.");
+  }
+}
+
+// INSERT ... ON CONFLICT (id) DO NOTHING (la tabla es append-only: nunca
+// UPDATE). Devuelve cuántas filas eran nuevas.
+export async function insertarEventos(admin, filas) {
+  try {
+    const { data, error } = await admin
+      .from("recommendation_events")
+      .upsert(filas, { onConflict: "id", ignoreDuplicates: true })
+      .select("id");
+    if (error) return clasificarError(error, "No se pudo registrar el evento.");
+    return { ok: true, nuevos: Array.isArray(data) ? data.length : 0 };
+  } catch (e) {
+    return clasificarError(e, "No se pudo registrar el evento.");
+  }
+}

@@ -72,7 +72,11 @@ function clienteFalso(tablas, escrituras, { admin, control }) {
   return {
     auth: {
       async getUser(t) {
-        return t === "token-bueno" ? { data: { user: { id: USUARIO } }, error: null } : { data: { user: null }, error: { message: "invalid" } };
+        // "token-bueno" o, para el E2E en navegador, un JWT de prueba cuyo sub
+        // sea el usuario del escenario.
+        let sub = null;
+        try { sub = JSON.parse(Buffer.from(String(t).split(".")[1], "base64url").toString()).sub; } catch { sub = null; }
+        return t === "token-bueno" || sub === USUARIO ? { data: { user: { id: USUARIO } }, error: null } : { data: { user: null }, error: { message: "invalid" } };
       },
     },
     from(tabla) {
@@ -81,6 +85,7 @@ function clienteFalso(tablas, escrituras, { admin, control }) {
       let op = "select";
       let carga = null;
       let rango = null;
+      let ignorar = false;
       const q = {
         select(c) { cols = c; return q; },
         eq(k, v) { filtros.push([k, v]); return q; },
@@ -89,7 +94,7 @@ function clienteFalso(tablas, escrituras, { admin, control }) {
         range(a, b) { rango = [a, b]; return q; },
         insert(filas) { op = "insert"; carga = Array.isArray(filas) ? filas : [filas]; return q; },
         update(v) { op = "update"; carga = v; return q; },
-        upsert(filas) { op = "upsert"; carga = Array.isArray(filas) ? filas : [filas]; return q; },
+        upsert(filas, opciones = {}) { op = "upsert"; ignorar = Boolean(opciones.ignoreDuplicates); carga = Array.isArray(filas) ? filas : [filas]; return q; },
         async maybeSingle() { const { data, error } = await ejecutar(); return { data: data[0] ?? null, error }; },
         async single() { const { data, error } = await ejecutar(); return { data: data[0] ?? null, error }; },
         then(ok, mal) { return ejecutar().then(ok, mal); },
@@ -102,13 +107,15 @@ function clienteFalso(tablas, escrituras, { admin, control }) {
           await Promise.resolve();
           const filas = carga.map((f) => {
             const existente = t.find((x) => x.id === f.id);
+            if (existente && ignorar) return null; // ON CONFLICT DO NOTHING: no se devuelve
             if (existente) { Object.assign(existente, structuredClone(f), { updated_at: new Date().toISOString() }); return existente; }
             const nueva = { created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...structuredClone(f) };
             t.push(nueva);
             return nueva;
           });
-          escrituras.push({ tabla, op, filas });
-          return { data: filas.map((f) => proyectar(f, cols)), error: null };
+          const nuevas = filas.filter(Boolean);
+          escrituras.push({ tabla, op, filas: nuevas });
+          return { data: nuevas.map((f) => proyectar(f, cols)), error: null };
         }
         if (op === "insert") {
           const nuevas = carga.map((f) => ({ id: crypto.randomUUID(), created_at: new Date().toISOString(), started_at: new Date().toISOString(), ...f }));

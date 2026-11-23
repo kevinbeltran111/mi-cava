@@ -29,6 +29,8 @@ import { supabase } from "./supabaseClient";
 import { Onboarding, InvitacionOnboarding, MisPreferencias } from "./onboarding/Onboarding.jsx";
 import { CARGA, ESTADOS, PASOS, leerPreferencias, omitirOnboarding, pasoParaReanudar } from "./onboarding/preferencias.js";
 import { decidirOnboarding, rolConCava, lecturaConTiempoLimite, escrituraConTiempoLimite } from "./onboarding/flujo.js";
+import { ElegirDeMiCava } from "./que-tomo/ElegirDeMiCava.jsx";
+import { leerReservaDeVino, quitarReserva } from "./que-tomo/api.js";
 
 // Expone el cliente para poder probar cosas desde la consola del navegador
 // mientras no tenemos el botón de Administración visible en pantalla.
@@ -481,7 +483,7 @@ function ProfileSetup({ onSubmit }) {
 }
 
 // ---------- Wine form/detail modal ----------
-function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines, onSave, onDelete, onRate, onAbrir, onSaveExperiencia, onRegistrarExperiencia, onToggleFavorito, onAgregarBotella, onOpenWine, onCancel }) {
+function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines, onSave, onDelete, onRate, onAbrir, onSaveExperiencia, onRegistrarExperiencia, onToggleFavorito, onAgregarBotella, onOpenWine, onCancel, abrirAlEntrar = false, onAperturaConfirmada, onLeerReserva, onQuitarReserva }) {
   const isNew = !wine;
   const isAuthor = isNew || (wine.userId === myUserId && canEdit);
   // UX-08: separa consulta (ficha de solo lectura) de edición dentro del
@@ -517,7 +519,13 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
 
   // ---- Etapa 5: Abrir + experiencias ----
   const [experiencias, setExperiencias] = useState(null);
-  const [confirmAbrir, setConfirmAbrir] = useState(false);
+  // 7.4-B4: «Abrir esta botella» desde «Elegir de mi cava» abre la ficha con
+  // el mismo diálogo de confirmación ya visible (flujo de apertura existente).
+  const [confirmAbrir, setConfirmAbrir] = useState(() => Boolean(abrirAlEntrar) && !isNew && (wine?.stock ?? 0) > 0);
+  // 7.4-B4: reserva «para una ocasión especial» (estado persistido).
+  const [reservaEstado, setReservaEstado] = useState(isNew || !onLeerReserva ? "no_aplica" : "cargando");
+  const [quitandoReserva, setQuitandoReserva] = useState(false);
+  const [reservaError, setReservaError] = useState(null);
   const [abriendo, setAbriendo] = useState(false);
   const [abrirResultado, setAbrirResultado] = useState(null); // { stock, consumoId } o { error }
   const [showExperienciaForm, setShowExperienciaForm] = useState(false);
@@ -593,11 +601,34 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 7.4-B4: al abrir la ficha se lee si el vino está reservado.
+  useEffect(() => {
+    if (isNew || !onLeerReserva) return;
+    let vigente = true;
+    onLeerReserva(wine.id).then((r) => {
+      if (vigente) setReservaEstado(r.ok ? (r.reservado ? "reservado" : "libre") : "error");
+    });
+    return () => { vigente = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleQuitarReserva = async () => {
+    if (quitandoReserva) return;
+    setQuitandoReserva(true);
+    setReservaError(null);
+    const r = await onQuitarReserva(wine.id);
+    setQuitandoReserva(false);
+    if (r.ok) setReservaEstado("libre");
+    else setReservaError("No se pudo quitar la reserva. Revisá tu conexión y probá de nuevo.");
+  };
+
   const handleAbrirConfirm = async () => {
     setAbriendo(true);
     setConfirmAbrir(false);
     try {
       const result = await onAbrir(draft.id);
+      // 7.4-B4: la apertura quedó confirmada (registrar_consumo respondió).
+      onAperturaConfirmada?.(result.consumoId, result.stock);
       setDraft((w) => ({ ...w, stock: result.stock }));
       setPersisted((p) => (p ? { ...p, stock: result.stock } : p));
       setAbrirResultado(result);
@@ -1616,6 +1647,24 @@ function WineModal({ wine, myUserId, myName, canEdit, accessToken, existingWines
                   )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ---- 7.4-B4: reserva para una ocasión especial ---- */}
+          {!isNew && isAuthor && !showEditForm && reservaEstado === "reservado" && (
+            <div data-testid="ficha-reserva" style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 16, marginTop: 4 }}>
+              <div style={{ background: CREAM, border: `1px solid ${GOLD}`, borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: BORDEAUX }}>Reservado para una ocasión especial</p>
+                  <p style={{ margin: "2px 0 0", fontSize: 12.5, color: MUTED }}>No lo incluimos en «Elegir de mi cava» mientras esté reservado.</p>
+                </div>
+                <button disabled={quitandoReserva} onClick={handleQuitarReserva} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${BORDEAUX}`, background: "none", color: BORDEAUX, cursor: quitandoReserva ? "default" : "pointer", fontSize: 13.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                  {quitandoReserva && <Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} />} Quitar la reserva
+                </button>
+              </div>
+              {reservaError && (
+                <div style={{ background: "#F5E6E1", border: `1px solid ${DANGER}`, color: DANGER, padding: "9px 12px", borderRadius: 8, fontSize: 13, marginTop: 8 }}>{reservaError}</div>
+              )}
             </div>
           )}
 
@@ -2730,6 +2779,9 @@ export default function App() {
   const [invitacionOculta, setInvitacionOculta] = useState(false);
   const [invitacionOcupada, setInvitacionOcupada] = useState(false);
   const [showPreferencias, setShowPreferencias] = useState(false);
+  // 7.4-B4: «Elegir de mi cava» y la apertura pedida desde una recomendación.
+  const [showElegir, setShowElegir] = useState(false);
+  const [aperturaPendiente, setAperturaPendiente] = useState(null); // { wineId, alConfirmar }
   const prefsSeqRef = useRef(0);
   const prefsUserId = session?.user?.id ?? null;
   const prefsRol = profile ? profile.role : null;
@@ -3449,7 +3501,15 @@ export default function App() {
               )}
             </p>
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {hasCava && (
+              <button
+                onClick={() => setShowElegir(true)}
+                style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", color: CREAM, border: `1px solid ${GOLD}`, borderRadius: 8, padding: "12px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}
+              >
+                <Wine size={17} /> Elegir de mi cava
+              </button>
+            )}
             {isAdmin && (
               <button
                 onClick={() => setShowAdmin(true)}
@@ -3681,7 +3741,34 @@ export default function App() {
           onToggleFavorito={handleToggleFavorito}
           onAgregarBotella={handleAgregarBotella}
           onOpenWine={handleOpenWine}
-          onCancel={() => { setShowForm(false); setEditing(null); }}
+          onCancel={() => { setShowForm(false); setEditing(null); setAperturaPendiente(null); }}
+          abrirAlEntrar={Boolean(editing && aperturaPendiente?.wineId === editing.id)}
+          onAperturaConfirmada={(consumoId, stock) => {
+            if (editing && aperturaPendiente?.wineId === editing.id) aperturaPendiente.alConfirmar(consumoId, stock);
+          }}
+          onLeerReserva={(wineId) => leerReservaDeVino(supabase, { userId: session.user.id, wineId })}
+          onQuitarReserva={async (wineId) => {
+            const r = await quitarReserva(session.access_token, wineId);
+            return { ok: r.status === 200 };
+          }}
+        />
+      )}
+
+      {showElegir && hasCava && (
+        <ElegirDeMiCava
+          accessToken={session.access_token}
+          tema={TEMA}
+          vinos={wines}
+          Botella={BottlePlaceholder}
+          onCerrar={() => { setShowElegir(false); setAperturaPendiente(null); }}
+          onAgregarVino={() => { setShowElegir(false); setEditing(null); setShowForm(true); }}
+          onAbrirBotella={(wineId, { alConfirmar }) => {
+            const vino = wines.find((w) => w.id === wineId);
+            if (!vino) return;
+            setAperturaPendiente({ wineId, alConfirmar });
+            setEditing(vino);
+            setShowForm(true);
+          }}
         />
       )}
 

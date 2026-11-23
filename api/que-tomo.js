@@ -19,6 +19,9 @@
 //                   vino y ese usuario. 200 { reserva: { wineId, estado:
 //                   "quitada" | "no_habia_reserva" } }; vino ajeno o
 //                   inexistente → 404.
+//   evento          { accion: "evento", sesionId, tipo, ... }
+//                   (7.4-B4) Medición de beta; contrato en
+//                   _que-tomo/eventos.js. Idempotente; no altera la sesión.
 //   * Solo se atiende "cellar" («Elegir de mi cava»).
 //     "food" y "discovery" → 501 modo_no_disponible (7.5). Sin modo o con
 //     otro valor → 400 modo_invalido.
@@ -47,8 +50,9 @@
 // reserva con una escritura condicionada por context.revision (sin
 // migración). Si otro pedido escribió antes, se relee y se reintenta.
 // Ningún paso inventa vinos, preferencias ni explicaciones. No escribe
-// recommendation_events ni inferencias; la única escritura en
-// user_knowledge es la reserva explícita (reservar / quitar_reserva).
+// inferencias; la única escritura en user_knowledge es la reserva explícita
+// (reservar / quitar_reserva) y la única en recommendation_events es la
+// acción «evento».
 // =============================================================================
 
 import { createClient } from "@supabase/supabase-js";
@@ -59,7 +63,9 @@ import { prepararCellar } from "./_que-tomo/motor_cellar.js";
 import {
   crearSesion, registrarItems, cerrarSesion, leerSesion, actualizarContextoSesion,
   leerItem, vinoPropio, leerReserva, guardarReserva, revocarReserva,
+  leerItemsDeSesion, leerConsumoPropio, insertarEventos,
 } from "./_que-tomo/sesiones.js";
+import { validarEvento, filasDeEvento } from "./_que-tomo/eventos.js";
 import { MARCA_RESERVA, idReserva, filaReserva } from "./_que-tomo/conocimiento/reserva.js";
 import {
   validarRefinamiento, filtrosDeSesion, acumularFiltro, temporalDeFiltros, contextoDeSesion,
@@ -74,7 +80,7 @@ const ROLES_CON_CAVA = ["admin", "editor"];
 export const MODOS_HABILITADOS = Object.freeze(["cellar"]);
 export const MODOS_POSTERGADOS = Object.freeze(["food", "discovery"]);
 export const TANDA_INICIAL = 1;
-export const ACCIONES = Object.freeze(["reservar", "quitar_reserva"]);
+export const ACCIONES = Object.freeze(["reservar", "quitar_reserva", "evento"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const OPCIONES_SERVIDOR = { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } };
 
@@ -158,6 +164,17 @@ export function crearHandler(deps = {}) {
         estado: "ok",
         reserva: { wineId: wineId.toLowerCase(), estado: r.revocadas > 0 ? "quitada" : "no_habia_reserva" },
       });
+    }
+
+    // 7.4-B4: medición. No depende del modo ni de que la sesión siga activa
+    // (una apertura puede confirmarse después), pero sí de su pertenencia.
+    if (accion === "evento") {
+      const v = validarEvento(req.body);
+      if (!v.ok) return responder(res, 400, { error: v.mensaje, codigo: v.codigo });
+      const rol = await verificarRol(userClient, userId);
+      if (!rol.ok) return responder(res, rol.status, rol.cuerpo);
+      const r = await registrarEvento({ userClient, admin: () => crearCliente(supabaseUrl, serviceKey, OPCIONES_SERVIDOR), userId, ev: v.evento });
+      return responder(res, r.status, r.cuerpo);
     }
 
     const modo = req.body?.modo;
@@ -376,6 +393,43 @@ async function generarTanda({ motor, consulta, modo, tiempoLimiteMotorMs, userCl
   };
 }
 
+// 7.4-B4: verifica pertenencia (sesión, ítems, consumo, tanda, filtros) y
+// registra el evento sin duplicados. → { status, cuerpo }
+async function registrarEvento({ userClient, admin, userId, ev }) {
+  const noEncontrado = (codigo, error) => ({ status: 404, cuerpo: { error, codigo } });
+  const l = await leerSesion(userClient, ev.sesionId);
+  if (!l.ok) return { status: 503, cuerpo: { error: l.error.mensaje, codigo: "evento_no_registrado" } };
+  if (!l.sesion || l.sesion.user_id !== userId) return noEncontrado("sesion_no_encontrada", "No encontramos esa consulta.");
+
+  const li = await leerItemsDeSesion(userClient, ev.sesionId);
+  if (!li.ok) return { status: 503, cuerpo: { error: li.error.mensaje, codigo: "evento_no_registrado" } };
+  const items = new Map(li.items.filter((i) => i.session_id === ev.sesionId).map((i) => [i.id, i]));
+  if (!ev.itemIds.every((id) => items.has(id))) return noEncontrado("item_no_encontrado", "No encontramos esa recomendación en esta consulta.");
+  if (ev.tipo === "shown" && new Set(ev.itemIds.map((id) => items.get(id).batch_no)).size !== 1) {
+    return { status: 400, cuerpo: { error: "La tanda mostrada mezcla recomendaciones de distintas tandas.", codigo: "item_invalido" } };
+  }
+  if (ev.tipo === "bottle_opened") {
+    const c = await leerConsumoPropio(userClient, { consumoId: ev.consumoId, userId });
+    if (!c.ok) return { status: 503, cuerpo: { error: c.error.mensaje, codigo: "evento_no_registrado" } };
+    if (!c.consumo || c.consumo.wine_id !== items.get(ev.itemIds[0]).wine_id) {
+      return noEncontrado("consumo_no_encontrado", "No encontramos esa apertura para este vino.");
+    }
+  }
+  if (ev.tipo === "new_batch") {
+    if (ev.tanda !== null && ![...items.values()].some((i) => i.batch_no === ev.tanda)) {
+      return noEncontrado("tanda_no_encontrada", "No encontramos esa tanda en esta consulta.");
+    }
+    const enSesion = new Set(filtrosDeSesion(l.sesion.context).map((f) => f.clave));
+    if (!ev.nuevaTanda.filtros.every((f) => enSesion.has(f))) {
+      return { status: 400, cuerpo: { error: "Los filtros no corresponden a esta consulta.", codigo: "evento_invalido" } };
+    }
+  }
+  const filas = filasDeEvento(ev, { items });
+  const w = await insertarEventos(admin(), filas);
+  if (!w.ok) return { status: 503, cuerpo: { error: w.error.mensaje, codigo: "evento_no_registrado" } };
+  return { status: 200, cuerpo: { estado: "ok", tipo: ev.tipo, registrados: w.nuevos, duplicados: filas.length - w.nuevos } };
+}
+
 // 7.4-B3: { accion: "reservar", modo: "cellar", sesionId, itemId }
 function validarReservar(body) {
   const err = (codigo, mensaje) => ({ ok: false, error: { tipo: "validacion", mensaje }, codigo });
@@ -478,6 +532,12 @@ function respuestaOk({ sesionId, tanda, filtros, valor, items }) {
       vecesConsumido: r.candidato.historial.veces,
       favorito: r.candidato.favorito,
       explicacion: r.explicacion,
+      // 7.4-B4: filtros de la sesión que podrían alcanzar a este vino sin
+      // poder confirmarlo (p. ej. varietal vacío o ambiguo). La pantalla no
+      // debe presentar esa exclusión como garantizada.
+      inciertas: (r.candidato.coincidenciasInciertas || [])
+        .filter((x) => x.origen === "temporal" && x.alcance?.tipo === "grape")
+        .map((x) => ({ clave: x.alcance.clave, coincidencia: x.coincidencia })),
     })),
   };
 }

@@ -20,6 +20,7 @@ import { recuperarCandidatos } from "../../api/_que-tomo/candidatos.js";
 import { validarSalidaMotor } from "../../api/_que-tomo/motor.js";
 import { prepararCellar, explicar } from "../../api/_que-tomo/motor_cellar.js";
 import { idReserva } from "../../api/_que-tomo/conocimiento/reserva.js";
+import { idEvento } from "../../api/_que-tomo/eventos.js";
 import { crearSesion, registrarItems } from "../../api/_que-tomo/sesiones.js";
 
 const REST = process.env.IT_REST_URL;
@@ -139,7 +140,6 @@ const huellaIntegridad = () => sql(`
     union all select 'k:' || md5(string_agg(to_jsonb(k)::text, ',' order by id)) from public.user_knowledge k
       where not coalesce(k.value ->> 'marca' = 'reserva', false)
     union all select 'u:' || md5(string_agg(to_jsonb(u)::text, ',' order by user_id)) from public.user_preferences u
-    union all select 'e:' || count(*)::text from public.recommendation_events
   ) s`);
 
 const opciones = { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } };
@@ -839,6 +839,106 @@ test("7.4-B3 rechazos: sesión, ítem o vino ajenos, sesión inactiva, entradas 
   assert.equal(contarFilas(), antes);
 });
 
+// ---------------------------------------------------------------------------
+// 7.4-B4: medición de beta (acción «evento»)
+// ---------------------------------------------------------------------------
+const evento = (sesionId, tipo, extra = {}) => ({ accion: "evento", sesionId, tipo, ...extra });
+const eventosDe = (sesionId) => JSON.parse(sql(`select coalesce(json_agg(json_build_array(id, event_type, recommendation_item_id, payload) order by event_type, created_at), '[]') from public.recommendation_events where session_id = '${sesionId}'`));
+// Consumo de prueba (lo que crearía registrar_consumo); se borra al final del
+// caso para no alterar la biblioteca.
+const crearConsumo = (uid, wineId) => sql(`with c as (insert into public.consumos (wine_id, user_id) values ('${wineId}', '${uid}') returning id) select id from c`);
+
+test("7.4-B4 eventos (M): shown, selected y bottle_opened verificados, sin duplicados; new_batch de un refinamiento", { skip }, async () => {
+  const consumos = [];
+  try {
+    const t1 = await llamar({ token: tokenDe(M) });
+    const sid = t1.cuerpo.sesionId;
+    const items = t1.cuerpo.recomendaciones.map((r) => r.itemId);
+    const s1 = await llamar({ token: tokenDe(M), body: evento(sid, "shown", { itemIds: items }) });
+    assert.deepEqual([s1.codigo, s1.cuerpo.registrados, s1.cuerpo.duplicados], [200, 3, 0], JSON.stringify(s1.cuerpo));
+    const s2 = await llamar({ token: tokenDe(M), body: evento(sid, "shown", { itemIds: items }) });
+    assert.deepEqual([s2.codigo, s2.cuerpo.registrados, s2.cuerpo.duplicados], [200, 0, 3], "renderizado repetido: ON CONFLICT DO NOTHING");
+
+    const principal = t1.cuerpo.recomendaciones[0];
+    const sel = await Promise.all([1, 2, 3].map(() => llamar({ token: tokenDe(M), body: evento(sid, "selected", { itemId: principal.itemId }) })));
+    assert.deepEqual(sel.map((r) => r.codigo), [200, 200, 200]);
+    assert.equal(sel.reduce((n, r) => n + r.cuerpo.registrados, 0), 1, "tres toques simultáneos, un evento");
+
+    consumos.push(crearConsumo(M, principal.wineId));
+    for (let i = 0; i < 2; i++) {
+      const ab = await llamar({ token: tokenDe(M), body: evento(sid, "bottle_opened", { itemId: principal.itemId, consumoId: consumos[0] }) });
+      assert.equal(ab.codigo, 200, JSON.stringify(ab.cuerpo));
+    }
+
+    const t2 = await llamar({ token: tokenDe(M), body: excluir(sid, "Malbec") });
+    const nb = await llamar({ token: tokenDe(M), body: evento(sid, "new_batch", { origen: "refinamiento", tanda: t2.cuerpo.tanda, resultado: "ok", filtros: ["malbec"] }) });
+    assert.equal(nb.codigo, 200, JSON.stringify(nb.cuerpo));
+
+    const filas = eventosDe(sid);
+    assert.deepEqual(filas.map((f) => f[1]), ["bottle_opened", "new_batch", "selected", "shown", "shown", "shown"]);
+    const [bo] = filas.filter((f) => f[1] === "bottle_opened");
+    assert.deepEqual([bo[0], bo[2], bo[3]], [idEvento([sid, principal.itemId, "bottle_opened", consumos[0]]), principal.itemId, { tanda: 1, consumoId: consumos[0] }]);
+    const [n] = filas.filter((f) => f[1] === "new_batch");
+    assert.deepEqual([n[2], n[3]], [null, { origen: "refinamiento", tanda: 2, resultado: "ok", motivo: null, filtros: ["malbec"] }]);
+    // Lo ve M por RLS; X no.
+    assert.equal((await clienteUsuario(M).from("recommendation_events").select("id").eq("session_id", sid)).data.length, 6);
+    assert.equal((await clienteUsuario(X).from("recommendation_events").select("id").eq("session_id", sid)).data.length, 0);
+    // La medición no tocó la sesión.
+    assert.equal(ctxSesion(sid).revision, 2);
+  } finally {
+    for (const c of consumos) sql(`delete from public.consumos where id = '${c}'`);
+  }
+});
+
+test("7.4-B4 eventos: pertenencia verificada en el servidor (sesión, ítem, consumo, tanda, filtros) — sin escrituras", { skip }, async () => {
+  const consumos = [];
+  try {
+    const tx = await llamar({ token: tokenDe(X) });
+    const tx2 = await llamar({ token: tokenDe(X) });
+    const sid = tx.cuerpo.sesionId;
+    const [a, b] = tx.cuerpo.recomendaciones;
+    consumos.push(crearConsumo(X, b.wineId)); // consumo de OTRO vino de la tanda
+    consumos.push(crearConsumo(Y, WY)); // consumo ajeno
+    const antes = contarFilas();
+    for (const [token, body, codigo, cod] of [
+      [tokenDe(Y), evento(sid, "shown", { itemIds: [a.itemId] }), 404, "sesion_no_encontrada"],
+      [tokenDe(X), evento(sid, "selected", { itemId: tx2.cuerpo.recomendaciones[0].itemId }), 404, "item_no_encontrado"],
+      [tokenDe(X), evento(sid, "bottle_opened", { itemId: a.itemId, consumoId: consumos[0] }), 404, "consumo_no_encontrado"],
+      [tokenDe(X), evento(sid, "bottle_opened", { itemId: a.itemId, consumoId: consumos[1] }), 404, "consumo_no_encontrado"],
+      [tokenDe(X), evento(sid, "new_batch", { origen: "refinamiento", tanda: 2, resultado: "ok", filtros: [] }), 404, "tanda_no_encontrada"],
+      [tokenDe(X), evento(sid, "new_batch", { origen: "refinamiento", tanda: null, resultado: "sin_candidatos", motivo: "sin_stock", filtros: ["malbec"] }), 400, "evento_invalido"],
+      [tokenDe(X), evento(sid, "dismissed", { itemId: a.itemId }), 400, "evento_invalido"],
+      [tokenDe(V), evento(sid, "shown", { itemIds: [a.itemId] }), 403, "sin_cava"],
+    ]) {
+      const r = await llamar({ token, body });
+      assert.equal(r.codigo, codigo, cod);
+      assert.equal(r.cuerpo.codigo, cod);
+    }
+    assert.equal(contarFilas(), antes);
+    assert.deepEqual(eventosDe(sid), []);
+  } finally {
+    for (const c of consumos) sql(`delete from public.consumos where id = '${c}'`);
+  }
+});
+
+test("7.4-B4 eventos: sin stock dentro de una consulta queda medido como new_batch sin candidatos", { skip }, async () => {
+  const t1 = await llamar({ token: tokenDe(X) });
+  const sid = t1.cuerpo.sesionId;
+  const original = sql(`select json_agg(json_build_array(wine_id, stock)) from public.wine_privado where user_id = '${X}'`);
+  sql(`update public.wine_privado set stock = 0 where user_id = '${X}'`);
+  try {
+    const r = await llamar({ token: tokenDe(X), body: excluir(sid, "Syrah") });
+    assert.deepEqual([r.cuerpo.estado, r.cuerpo.motivo], ["sin_candidatos", "sin_stock"]);
+    for (let i = 0; i < 2; i++) {
+      const e = await llamar({ token: tokenDe(X), body: evento(sid, "new_batch", { origen: "refinamiento", tanda: null, resultado: "sin_candidatos", motivo: "sin_stock", filtros: ["syrah"] }) });
+      assert.equal(e.codigo, 200, JSON.stringify(e.cuerpo));
+    }
+    assert.deepEqual(eventosDe(sid).map((f) => [f[1], f[3].resultado, f[3].motivo]), [["new_batch", "sin_candidatos", "sin_stock"]]);
+  } finally {
+    for (const [wid, stock] of JSON.parse(original)) sql(`update public.wine_privado set stock = ${stock} where wine_id = '${wid}'`);
+  }
+});
+
 // Último: ni 7.3-A ni 7.4-B1/B2/B3 modificaron vinos, stock, consumos,
 // preferencias, conocimiento previo ni eventos. Lo único nuevo en
 // user_knowledge son las reservas explícitas de 7.4-B3 (todas quitadas al
@@ -851,6 +951,11 @@ test("integridad: solo se escribieron reservas explícitas; ni inferencias, ni e
   for (const r of reservas) {
     assert.deepEqual(r.slice(2), ["explicit", "wine", "recommender", "revoked", { marca: "reserva", motivo: "ocasion_especial", version: 1 }]);
   }
-  assert.equal(Number(sql("select count(*) from public.recommendation_events")), 0);
+  // 7.4-B4: solo eventos de medición de los tipos previstos, todos de
+  // sesiones de su propio usuario (los de los tres casos «7.4-B4 eventos»).
+  assert.deepEqual(JSON.parse(sql(`select coalesce(json_object_agg(event_type, n), '{}') from (select event_type, count(*) n from public.recommendation_events group by 1) t`)),
+    { shown: 3, selected: 1, bottle_opened: 1, new_batch: 2 });
+  assert.equal(Number(sql(`select count(*) from public.recommendation_events e left join public.recommendation_items i on i.id = e.recommendation_item_id
+    where e.recommendation_item_id is not null and (i.session_id is distinct from e.session_id)`)), 0);
   assert.equal(Number(sql("select count(*) from public.user_knowledge where knowledge_type = 'inference'")), 1);
 });

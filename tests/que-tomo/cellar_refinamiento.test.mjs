@@ -110,6 +110,16 @@ test("coincidencias inciertas: se conservan (tratamiento de 7.3-B) y llegan marc
   assert.deepEqual(sinVarietal.coincidenciasInciertas.map((x) => [x.origen, x.coincidencia, x.alcance.clave]), [["temporal", "no_evaluable", "malbec"]]);
 });
 
+test("7.4-B4: la respuesta marca por recomendación los filtros que no se pueden confirmar", async () => {
+  const e = entorno({ preferencias: PREF, vinos: [{ id: v(5), nombre: "Sin varietal", stock: 1 }, { id: v(2), nombre: "Merlot", varietal: "Merlot", stock: 1 }] });
+  const t1 = await e.pedir({ modo: "cellar" });
+  assert.equal(t1.cuerpo.recomendaciones.every((r) => r.inciertas.length === 0), true);
+  const t2 = await e.pedir(excluir(t1.cuerpo.sesionId, "Malbec"));
+  const porId = Object.fromEntries(t2.cuerpo.recomendaciones.map((r) => [r.wineId, r.inciertas]));
+  assert.deepEqual(porId[v(5)], [{ clave: "malbec", coincidencia: "no_evaluable" }]);
+  assert.deepEqual(porId[v(2)], []);
+});
+
 test("cero candidatos por el filtro: sin_candidatos excluidos_por_filtro, sesión activa con el filtro guardado; distinto de sin_stock", async () => {
   const e = entorno({
     preferencias: PREF,

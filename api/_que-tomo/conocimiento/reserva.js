@@ -21,7 +21,7 @@
 // conserva created_at del primer alta y updated_at de la última acción.
 // =============================================================================
 
-import crypto from "node:crypto";
+import { uuidV5 } from "../uuid5.js";
 
 export const MARCA_RESERVA = Object.freeze({ marca: "reserva", motivo: "ocasion_especial", version: 1 });
 export const SIGNIFICADO_RESERVA = "Reservado para una ocasión especial";
@@ -37,15 +37,9 @@ export function esReserva(valor) {
   );
 }
 
-// UUID v5 (RFC 4122, SHA-1) de `${userId}:${wineId}:reserva`.
+// UUID v5 de `${userId}:${wineId}:reserva` en el espacio de reservas.
 export function idReserva(userId, wineId) {
-  const ns = Buffer.from(ESPACIO_RESERVAS.replace(/-/g, ""), "hex");
-  const nombre = Buffer.from(`${String(userId).toLowerCase()}:${String(wineId).toLowerCase()}:reserva`, "utf8");
-  const h = crypto.createHash("sha1").update(Buffer.concat([ns, nombre])).digest();
-  h[6] = (h[6] & 0x0f) | 0x50;
-  h[8] = (h[8] & 0x3f) | 0x80;
-  const x = h.subarray(0, 16).toString("hex");
-  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`;
+  return uuidV5(ESPACIO_RESERVAS, `${String(userId).toLowerCase()}:${String(wineId).toLowerCase()}:reserva`);
 }
 
 // Fila completa para el upsert. evidence registra desde dónde se reservó.
