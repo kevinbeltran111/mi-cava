@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 2.5 — registro de inversión y gastos · **Fecha de corte:** 2026-11-22 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 2.6 — gasto INPI y suscripciones recurrentes · **Fecha de corte:** 2026-11-22 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -152,15 +152,18 @@ La apertura no habilita desplegar, crear migraciones ni activar escrituras de in
 | INV-001 | 2026-09-20 | Créditos Anthropic | USD | 5,00 | Compra de créditos |
 | INV-002 | 2026-09-23 | Vercel | USD | 9,99 | Gasto reportado |
 | INV-003 | 2026-09-23 | Dominio NIC | ARS | 8.500,00 | Registro de dominio |
-| INV-004 | 2026-10-02 | Claude Pro | USD | 20,00 | Gasto reportado |
-| INV-005 | 2026-11-14* | OpenAI | USD | 20,00 | Fecha asociada al agregado del registro; pendiente de confirmar contra comprobante |
+| INV-004 | 2026-10-02 | Claude Pro | USD | 20,00 | Suscripción mensual por débito automático informado |
+| INV-005 | 2026-11-14* | ChatGPT / OpenAI | USD | 20,00 | Suscripción mensual por débito automático informado; fecha asociada al registro, pendiente de contrastar con comprobante |
+| INV-006 | 2026-11-23 | INPI — búsqueda fonética de marca | ARS | 9.249,46 | Arancel de búsqueda fonética; Legal / Marca; pago informado por el usuario |
 
-**Total registrado (sin conversiones):** **ARS 8.500,00** + **USD 54,99**. Son subtotales en monedas diferentes, no un monto conjunto convertible por simple suma.
+**Total registrado (sin conversiones):** **ARS 17.749,46** + **USD 54,99**. Son subtotales en monedas diferentes, no un monto conjunto convertible por simple suma.
 
-**Alcance del registro:** costos efectivamente comunicados; no implica que se hayan identificado todos los costos, que sean recurrentes en cada período ni que exista una categoría fiscal o contable definida. No proyectar suscripciones como cargos futuros ni inventar cuotas.
+**Alcance del registro:** costos efectivamente comunicados; no implica que se hayan identificado todos los costos ni que exista una categoría fiscal o contable definida. Claude Pro y ChatGPT/OpenAI son suscripciones mensuales de USD 20 cada una según declaración del usuario, con débito automático y precio actualmente estable. Sus vencimientos efectivos no están confirmados: no inferirlos de la fecha del primer registro. Proyectar USD 40 por mes como gasto **esperado**, pero nunca sumarlo al total **pagado** hasta contar con confirmación del débito o una fuente verificable.
 
 **Reglas para nueva incorporación:** fecha de transacción, concepto/proveedor, moneda, monto, categoría (dominio, infraestructura, IA, otros), periodicidad si fue informada, comprobante opcional, notas y fuente. Usar un ID `INV-` estable para cada movimiento, prevenir duplicados por proveedor-fecha-monto, y guardar quién/ cuándo lo agregó o corrigió.
 
 **Requisitos para la visualización en «Mi Cava — Centro de Proyecto»:** sección independiente **«Inversión y gastos»** en navegación; tarjetas de subtotal por moneda (ARS y USD), tabla cronológica con filtros por proveedor, categoría, fecha y moneda, formulario de alta/edición y exportación CSV/XLSX si está disponible; opcionalmente conversión a una moneda de referencia con cotización, fecha y criterio transparentes. Conservar `INV-` y el historial de cambios. Si el Site guarda ediciones en D1 como propuestas, **no presentarlas como sincronizadas con GitHub** hasta tener mecanismo de conciliación. No alterar otros IDs del backlog ni confundir movimientos financieros con pendientes.
 
 **Nota:** *La fecha del gasto OpenAI proviene del momento de registro recuperado, no de un comprobante verificado. Revisar al conciliar gastos.*
+
+**Seguimiento automático propuesto (23/11/2026):** mantener una tabla separada de suscripciones (proveedor, importe esperado, moneda, periodicidad mensual, fecha de próximo débito por confirmar, estado activa/pausada) y movimientos reales. El Site puede generar vencimientos previstos y recordatorios; una imputación automática como *pagada* requiere verificación autorizada de la transacción o confirmación del usuario. Las ediciones del Site se guardan como propuestas locales hasta conciliar con GitHub. Evitar duplicados por período, proveedor e ID. No hay automatización de contabilización aprobada todavía.
