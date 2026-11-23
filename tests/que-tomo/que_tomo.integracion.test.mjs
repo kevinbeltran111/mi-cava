@@ -19,6 +19,7 @@ import { construirContexto } from "../../api/_que-tomo/contexto.js";
 import { recuperarCandidatos } from "../../api/_que-tomo/candidatos.js";
 import { validarSalidaMotor } from "../../api/_que-tomo/motor.js";
 import { prepararCellar, explicar } from "../../api/_que-tomo/motor_cellar.js";
+import { idReserva } from "../../api/_que-tomo/conocimiento/reserva.js";
 import { crearSesion, registrarItems } from "../../api/_que-tomo/sesiones.js";
 
 const REST = process.env.IT_REST_URL;
@@ -136,6 +137,7 @@ const huellaIntegridad = () => sql(`
     union all select 'p:' || md5(string_agg(to_jsonb(p)::text, ',' order by wine_id)) from public.wine_privado p
     union all select 'c:' || md5(string_agg(to_jsonb(c)::text, ',' order by id)) from public.consumos c
     union all select 'k:' || md5(string_agg(to_jsonb(k)::text, ',' order by id)) from public.user_knowledge k
+      where not coalesce(k.value ->> 'marca' = 'reserva', false)
     union all select 'u:' || md5(string_agg(to_jsonb(u)::text, ',' order by user_id)) from public.user_preferences u
     union all select 'e:' || count(*)::text from public.recommendation_events
   ) s`);
@@ -641,11 +643,168 @@ test("7.4-B2 solicitudes simultáneas (M): cuatro filtros a la vez, ninguno se p
   assert.deepEqual(idsDe(ultima), [WM.paraExplorar]);
 });
 
-// Último: ni 7.3-A ni 7.4-B1/B2 modificaron vinos, stock, consumos,
-// preferencias, conocimiento ni eventos.
-test("integridad: no se escribió user_knowledge, eventos ni datos de la biblioteca", { skip }, async () => {
+// ---------------------------------------------------------------------------
+// 7.4-B3: «Guardar para una ocasión especial»
+// ---------------------------------------------------------------------------
+const reservar = (sesionId, itemId) => ({ accion: "reservar", modo: "cellar", sesionId, itemId });
+const quitar = (wineId) => ({ accion: "quitar_reserva", wineId });
+const itemDe = (r, wineId) => r.cuerpo.recomendaciones.find((x) => x.wineId === wineId).itemId;
+const reservasDe = (uid, wineId) => JSON.parse(sql(`select coalesce(json_agg(to_jsonb(k)), '[]') from public.user_knowledge k where user_id = '${uid}' and wine_id = '${wineId}' and value ->> 'marca' = 'reserva'`));
+
+test("7.4-B3 recorrido (M): reservar → sale de la tanda y de una consulta nueva → quitar → vuelve; reservar de nuevo reactiva la misma fila", { skip }, async () => {
+  const stockAntes = sql(`select stock from public.wine_privado where wine_id = '${WM.favorito}'`);
+  const t1 = await llamar({ token: tokenDe(M) });
+  assert.equal(idsDe(t1)[0], WM.favorito);
+  const sid = t1.cuerpo.sesionId;
+  const item = itemDe(t1, WM.favorito);
+
+  const r = await llamar({ token: tokenDe(M), body: reservar(sid, item) });
+  assert.equal(r.codigo, 200, JSON.stringify(r.cuerpo));
+  assert.deepEqual([r.cuerpo.estado, r.cuerpo.tanda, r.cuerpo.sesionId], ["ok", 2, sid]);
+  assert.deepEqual(r.cuerpo.reserva, { id: idReserva(M, WM.favorito), wineId: WM.favorito, estado: "guardada" });
+  assert.deepEqual(idsDe(r), [WM.seisBotellas, WM.bienPuntuado, WM.paraExplorar]);
+  assert.deepEqual(r.cuerpo.filtros, []);
+  assert.deepEqual(ctxSesion(sid).temporal, { restricciones: [] });
+
+  const [k] = reservasDe(M, WM.favorito);
+  assert.deepEqual(
+    [k.id, k.knowledge_type, k.scope_type, k.scope_value, k.source_type, k.status, k.strength, k.meaning],
+    [idReserva(M, WM.favorito), "explicit", "wine", null, "recommender", "active", null, "Reservado para una ocasión especial"]);
+  assert.deepEqual(k.value, { marca: "reserva", motivo: "ocasion_especial", version: 1 });
+  assert.deepEqual(k.wine_snapshot, { nombre: "M Favorito", bodega: "Bodega Norte", varietal: "Merlot", anada: 2020, lugar: "Agrelo", region: "Mendoza" });
+  assert.deepEqual(k.evidence, { origen: "elegir_de_mi_cava", sesionId: sid, itemId: item, tanda: 1 });
+  assert.equal(sql(`select stock from public.wine_privado where wine_id = '${WM.favorito}'`), stockAntes, "el stock no cambia");
+  // M lo ve por RLS; X no.
+  assert.equal((await clienteUsuario(M).from("user_knowledge").select("id").eq("id", k.id)).data.length, 1);
+  assert.equal((await clienteUsuario(X).from("user_knowledge").select("id").eq("id", k.id)).data.length, 0);
+
+  const nueva = await llamar({ token: tokenDe(M) });
+  assert.equal(idsDe(nueva).includes(WM.favorito), false);
+
+  const q = await llamar({ token: tokenDe(M), body: quitar(WM.favorito) });
+  assert.deepEqual([q.codigo, q.cuerpo.reserva], [200, { wineId: WM.favorito, estado: "quitada" }]);
+  assert.equal(reservasDe(M, WM.favorito)[0].status, "revoked");
+  const vuelve = await llamar({ token: tokenDe(M) });
+  assert.equal(idsDe(vuelve)[0], WM.favorito);
+
+  const r2 = await llamar({ token: tokenDe(M), body: reservar(vuelve.cuerpo.sesionId, itemDe(vuelve, WM.favorito)) });
+  assert.equal(r2.cuerpo.reserva.estado, "reactivada");
+  assert.deepEqual(reservasDe(M, WM.favorito).map((x) => [x.id, x.status]), [[idReserva(M, WM.favorito), "active"]]);
+  assert.equal((await llamar({ token: tokenDe(M), body: quitar(WM.favorito) })).cuerpo.reserva.estado, "quitada");
+  assert.equal((await llamar({ token: tokenDe(M), body: quitar(WM.favorito) })).cuerpo.reserva.estado, "no_habia_reserva");
+});
+
+test("7.4-B3 último vino disponible (O): sin_candidatos excluidos_por_reserva, sesión activa", { skip }, async () => {
+  const t1 = await llamar({ token: tokenDe(O) });
+  const sid = t1.cuerpo.sesionId;
+  const r = await llamar({ token: tokenDe(O), body: reservar(sid, itemDe(t1, WO)) });
+  assert.equal(r.codigo, 200, JSON.stringify(r.cuerpo));
+  assert.deepEqual([r.cuerpo.estado, r.cuerpo.motivo, r.cuerpo.tanda, r.cuerpo.sesionId], ["sin_candidatos", "excluidos_por_reserva", null, sid]);
+  assert.equal(r.cuerpo.reserva.estado, "guardada");
+  assert.equal(sql(`select status from public.recommendation_sessions where id = '${sid}'`), "active");
+  const nueva = await llamar({ token: tokenDe(O) });
+  assert.deepEqual([nueva.cuerpo.estado, nueva.cuerpo.motivo], ["sin_candidatos", "excluidos_por_reserva"]);
+  assert.equal((await llamar({ token: tokenDe(O), body: quitar(WO) })).cuerpo.reserva.estado, "quitada");
+});
+
+test("7.4-B3 con filtro previo (X): la reserva se suma sin volverse filtro; al quitarla el vino vuelve en la misma sesión", { skip }, async () => {
+  const t1 = await llamar({ token: tokenDe(X) });
+  const sid = t1.cuerpo.sesionId;
+  const t2 = await llamar({ token: tokenDe(X), body: excluir(sid, "Malbec") });
+  assert.deepEqual(idsDe(t2), [WX.stockSinTomar]);
+  const r = await llamar({ token: tokenDe(X), body: reservar(sid, itemDe(t2, WX.stockSinTomar)) });
+  assert.deepEqual([r.cuerpo.estado, r.cuerpo.motivo], ["sin_candidatos", "excluidos_por_reserva"]);
+  assert.deepEqual(r.cuerpo.filtros.map((f) => f.clave), ["malbec"]);
+  assert.deepEqual(ctxSesion(sid).temporal, { restricciones: [{ tipo: "grape", clave: "malbec" }] });
+
+  await llamar({ token: tokenDe(X), body: quitar(WX.stockSinTomar) });
+  const t3 = await llamar({ token: tokenDe(X), body: excluir(sid, "Syrah") });
+  assert.equal(t3.codigo, 200, JSON.stringify(t3.cuerpo));
+  assert.deepEqual(idsDe(t3), [WX.stockSinTomar], "vuelve; el Malbec sigue filtrado");
+});
+
+test("7.4-B3 pedidos simultáneos (M): tres reservas del mismo ítem → una fila activa y tandas distintas", { skip }, async () => {
+  const t1 = await llamar({ token: tokenDe(M) });
+  const sid = t1.cuerpo.sesionId;
+  const item = itemDe(t1, WM.favorito);
+  const rs = await Promise.all([1, 2, 3].map(() => llamar({ token: tokenDe(M), body: reservar(sid, item) })));
+  for (const r of rs) assert.equal(r.codigo, 200, JSON.stringify(r.cuerpo));
+  assert.deepEqual(rs.map((r) => r.cuerpo.tanda).sort(), [2, 3, 4]);
+  const filas = reservasDe(M, WM.favorito);
+  assert.deepEqual(filas.map((x) => [x.id, x.status]), [[idReserva(M, WM.favorito), "active"]]);
+  assert.deepEqual(tandasDe(sid), [1, 2, 3, 4]);
+  await llamar({ token: tokenDe(M), body: quitar(WM.favorito) });
+});
+
+test("7.4-B3 falla al registrar la tanda (M): reserva guardada y reintentable; el reintento no la duplica", { skip }, async () => {
+  const t1 = await llamar({ token: tokenDe(M) });
+  const sid = t1.cuerpo.sesionId;
+  const item = itemDe(t1, WM.favorito);
+  const crearCliente = (url, key, opts) =>
+    createClient(url, key, {
+      ...opts,
+      global: {
+        ...(opts?.global || {}),
+        fetch: async (input, init) =>
+          String(input).includes("/rest/v1/recommendation_items") && init?.method === "POST"
+            ? Promise.reject(new TypeError("fetch failed"))
+            : fetch(input, init),
+      },
+    });
+  const r = await llamar({ token: tokenDe(M), body: reservar(sid, item), deps: { crearCliente } });
+  assert.equal(r.codigo, 503);
+  assert.deepEqual([r.cuerpo.estado, r.cuerpo.codigo, r.cuerpo.reintentable], ["reserva_guardada_sin_tanda", "persistencia_error", true]);
+  assert.equal(r.cuerpo.reserva.estado, "guardada");
+  assert.equal(reservasDe(M, WM.favorito).length, 1);
+
+  const re = await llamar({ token: tokenDe(M), body: reservar(sid, item) });
+  assert.equal(re.codigo, 200, JSON.stringify(re.cuerpo));
+  assert.deepEqual([re.cuerpo.reserva.estado, re.cuerpo.tanda], ["ya_estaba_activa", 3]);
+  assert.equal(idsDe(re).includes(WM.favorito), false);
+  assert.equal(reservasDe(M, WM.favorito).length, 1);
+  assert.equal(sql(`select status from public.recommendation_sessions where id = '${sid}'`), "active");
+  await llamar({ token: tokenDe(M), body: quitar(WM.favorito) });
+});
+
+test("7.4-B3 rechazos: sesión, ítem o vino ajenos, sesión inactiva, entradas inválidas — sin escrituras", { skip }, async () => {
+  const tx = await llamar({ token: tokenDe(X) });
+  const tx2 = await llamar({ token: tokenDe(X) });
+  const tm = await llamar({ token: tokenDe(M) });
+  const itemX = itemDe(tx, WX.favorito);
+  const itemM = tm.cuerpo.recomendaciones[0].itemId;
+  const cerrada = (await llamar({ token: tokenDe(X) })).cuerpo.sesionId;
+  sql(`update public.recommendation_sessions set status = 'completed', ended_at = now() where id = '${cerrada}'`);
+  const antes = contarFilas();
+  for (const [token, body, codigo, cod] of [
+    [tokenDe(Y), reservar(tx.cuerpo.sesionId, itemX), 404, "sesion_no_encontrada"],
+    [tokenDe(X), reservar(tx.cuerpo.sesionId, itemM), 404, "item_no_encontrado"],
+    [tokenDe(X), reservar(tx2.cuerpo.sesionId, itemX), 404, "item_no_encontrado"],
+    [tokenDe(X), reservar(cerrada, itemX), 409, "sesion_inactiva"],
+    [tokenDe(X), reservar(tx.cuerpo.sesionId, "no-es-uuid"), 400, "item_invalido"],
+    [tokenDe(X), quitar(WY), 404, "vino_no_encontrado"],
+    [tokenDe(X), quitar(WM.favorito), 404, "vino_no_encontrado"],
+    [tokenDe(X), { accion: "borrar", wineId: WX.favorito }, 400, "accion_invalida"],
+    [tokenDe(V), reservar(tx.cuerpo.sesionId, itemX), 403, "sin_cava"],
+  ]) {
+    const r = await llamar({ token, body });
+    assert.equal(r.codigo, codigo, cod);
+    assert.equal(r.cuerpo.codigo, cod);
+  }
+  assert.equal(contarFilas(), antes);
+});
+
+// Último: ni 7.3-A ni 7.4-B1/B2/B3 modificaron vinos, stock, consumos,
+// preferencias, conocimiento previo ni eventos. Lo único nuevo en
+// user_knowledge son las reservas explícitas de 7.4-B3 (todas quitadas al
+// final de sus pruebas).
+test("integridad: solo se escribieron reservas explícitas; ni inferencias, ni eventos, ni datos de la biblioteca", { skip }, async () => {
   assert.equal(huellaIntegridad(), estadoInicial);
-  assert.equal(Number(sql("select count(*) from public.user_knowledge")), 7);
+  assert.equal(Number(sql("select count(*) from public.user_knowledge where not coalesce(value ->> 'marca' = 'reserva', false)")), 7);
+  const reservas = JSON.parse(sql(`select coalesce(json_agg(json_build_array(user_id, wine_id, knowledge_type, scope_type, source_type, status, value) order by user_id, wine_id), '[]') from public.user_knowledge where value ->> 'marca' = 'reserva'`));
+  assert.deepEqual(reservas.map((r) => [r[0], r[1]]), [[X, WX.stockSinTomar], [O, WO], [M, WM.favorito]].sort((a, b) => (a[0] + a[1] < b[0] + b[1] ? -1 : 1)));
+  for (const r of reservas) {
+    assert.deepEqual(r.slice(2), ["explicit", "wine", "recommender", "revoked", { marca: "reserva", motivo: "ocasion_especial", version: 1 }]);
+  }
   assert.equal(Number(sql("select count(*) from public.recommendation_events")), 0);
   assert.equal(Number(sql("select count(*) from public.user_knowledge where knowledge_type = 'inference'")), 1);
 });

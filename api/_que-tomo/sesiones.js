@@ -130,3 +130,90 @@ export async function actualizarContextoSesion(admin, { sesionId, userId, revisi
     return clasificarError(e, "No se pudo actualizar la consulta.");
   }
 }
+
+// -----------------------------------------------------------------------------
+// 7.4-B3: ítems y reservas «para una ocasión especial».
+// Escrituras SOLO de la reserva explícita (conocimiento/reserva.js); nunca
+// inferencias ni eventos.
+// -----------------------------------------------------------------------------
+
+// Ítem recomendado, leído con el cliente DEL USUARIO (RLS: solo ítems de
+// sesiones propias). Ajeno e inexistente dan item: null.
+export async function leerItem(cliente, itemId) {
+  try {
+    const { data, error } = await cliente
+      .from("recommendation_items")
+      .select("id,session_id,batch_no,position,wine_id,relationship")
+      .eq("id", itemId)
+      .maybeSingle();
+    if (error) return clasificarError(error, "No se pudo leer la recomendación.");
+    return { ok: true, item: data ?? null };
+  } catch (e) {
+    return clasificarError(e, "No se pudo leer la recomendación.");
+  }
+}
+
+// ¿El vino existe y es del usuario? Cliente DEL USUARIO y, además del RLS de
+// wines, filtro explícito por user_id (no se asume la política de lectura).
+export async function vinoPropio(cliente, { wineId, userId }) {
+  try {
+    const { data, error } = await cliente.from("wines").select("id").eq("id", wineId).eq("user_id", userId).maybeSingle();
+    if (error) return clasificarError(error, "No se pudo verificar el vino.");
+    return { ok: true, visible: Boolean(data) };
+  } catch (e) {
+    return clasificarError(e, "No se pudo verificar el vino.");
+  }
+}
+
+export async function leerReserva(admin, { id, userId }) {
+  try {
+    const { data, error } = await admin
+      .from("user_knowledge")
+      .select("id,status,wine_id")
+      .eq("id", id)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) return clasificarError(error, "No se pudo leer la reserva.");
+    return { ok: true, reserva: data ?? null };
+  } catch (e) {
+    return clasificarError(e, "No se pudo leer la reserva.");
+  }
+}
+
+// Upsert sobre la clave primaria determinista (reserva.js → idReserva):
+// crea la fila o reactiva la existente. Nunca deja dos filas por vino.
+export async function guardarReserva(admin, fila) {
+  try {
+    const { data, error } = await admin
+      .from("user_knowledge")
+      .upsert(fila, { onConflict: "id" })
+      .select("id,status,wine_id");
+    if (error) return clasificarError(error, "No se pudo guardar la reserva.");
+    const r = Array.isArray(data) ? data[0] : data;
+    if (!r || r.status !== "active") return clasificarError({ code: "PGRST000" }, "No se pudo guardar la reserva.");
+    return { ok: true, reserva: r };
+  } catch (e) {
+    return clasificarError(e, "No se pudo guardar la reserva.");
+  }
+}
+
+// Revoca SOLO reservas activas de ese vino y ese usuario (marca en value).
+export async function revocarReserva(admin, { userId, wineId, marca }) {
+  try {
+    const { data, error } = await admin
+      .from("user_knowledge")
+      .update({ status: "revoked" })
+      .eq("user_id", userId)
+      .eq("wine_id", wineId)
+      .eq("knowledge_type", "explicit")
+      .eq("scope_type", "wine")
+      .eq("status", "active")
+      .eq("value->>marca", marca.marca)
+      .eq("value->>version", String(marca.version))
+      .select("id");
+    if (error) return clasificarError(error, "No se pudo quitar la reserva.");
+    return { ok: true, revocadas: Array.isArray(data) ? data.length : 0 };
+  } catch (e) {
+    return clasificarError(e, "No se pudo quitar la reserva.");
+  }
+}

@@ -5,6 +5,20 @@
 //   consulta nueva  { modo: "cellar" }
 //   refinamiento    { modo: "cellar", sesionId, restriccion: { alcance: { tipo: "grape", valor } } }
 //                   (7.4-B2; contrato completo en _que-tomo/refinamiento.js)
+//   reservar        { accion: "reservar", modo: "cellar", sesionId, itemId }
+//                   (7.4-B3) Verifica sesión propia y activa, ítem de ESA
+//                   sesión y vino propio; guarda la reserva explícita
+//                   (conocimiento/reserva.js, idempotente) y devuelve la tanda
+//                   siguiente sin ese vino. 200 { ...tanda, reserva }. Si la
+//                   reserva se guardó pero la tanda no: status del fallo con
+//                   { estado: "reserva_guardada_sin_tanda", codigo,
+//                   reintentable: true, reserva }; repetir el mismo pedido no
+//                   duplica la reserva.
+//   quitar_reserva  { accion: "quitar_reserva", wineId }
+//                   (7.4-B3) Sin sesión. Revoca solo la reserva activa de ese
+//                   vino y ese usuario. 200 { reserva: { wineId, estado:
+//                   "quitada" | "no_habia_reserva" } }; vino ajeno o
+//                   inexistente → 404.
 //   * Solo se atiende "cellar" («Elegir de mi cava»).
 //     "food" y "discovery" → 501 modo_no_disponible (7.5). Sin modo o con
 //     otro valor → 400 modo_invalido.
@@ -33,15 +47,20 @@
 // reserva con una escritura condicionada por context.revision (sin
 // migración). Si otro pedido escribió antes, se relee y se reintenta.
 // Ningún paso inventa vinos, preferencias ni explicaciones. No escribe
-// user_knowledge ni recommendation_events.
+// recommendation_events ni inferencias; la única escritura en
+// user_knowledge es la reserva explícita (reservar / quitar_reserva).
 // =============================================================================
 
 import { createClient } from "@supabase/supabase-js";
 import { construirContexto } from "./_que-tomo/contexto.js";
-import { recuperarCandidatos } from "./_que-tomo/candidatos.js";
+import { recuperarCandidatos, identidadDeVino } from "./_que-tomo/candidatos.js";
 import { MOTOR_ACTUAL, validarSalidaMotor } from "./_que-tomo/motor.js";
 import { prepararCellar } from "./_que-tomo/motor_cellar.js";
-import { crearSesion, registrarItems, cerrarSesion, leerSesion, actualizarContextoSesion } from "./_que-tomo/sesiones.js";
+import {
+  crearSesion, registrarItems, cerrarSesion, leerSesion, actualizarContextoSesion,
+  leerItem, vinoPropio, leerReserva, guardarReserva, revocarReserva,
+} from "./_que-tomo/sesiones.js";
+import { MARCA_RESERVA, idReserva, filaReserva } from "./_que-tomo/conocimiento/reserva.js";
 import {
   validarRefinamiento, filtrosDeSesion, acumularFiltro, temporalDeFiltros, contextoDeSesion,
   describirFiltros, revisionDe, MAX_INTENTOS_CONCURRENCIA,
@@ -55,6 +74,8 @@ const ROLES_CON_CAVA = ["admin", "editor"];
 export const MODOS_HABILITADOS = Object.freeze(["cellar"]);
 export const MODOS_POSTERGADOS = Object.freeze(["food", "discovery"]);
 export const TANDA_INICIAL = 1;
+export const ACCIONES = Object.freeze(["reservar", "quitar_reserva"]);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const OPCIONES_SERVIDOR = { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } };
 
 function responder(res, status, cuerpo) {
@@ -114,6 +135,31 @@ export function crearHandler(deps = {}) {
     });
 
     // Entrada
+    const accion = req.body?.accion ?? null;
+    if (accion !== null && !ACCIONES.includes(accion)) {
+      return responder(res, 400, { error: "Acción no válida.", codigo: "accion_invalida" });
+    }
+
+    // 7.4-B3: quitar una reserva no depende de una sesión (sirve desde la
+    // recomendación y desde la ficha del vino).
+    if (accion === "quitar_reserva") {
+      const wineId = req.body?.wineId;
+      if (typeof wineId !== "string" || !UUID.test(wineId)) {
+        return responder(res, 400, { error: "Identificador de vino no válido.", codigo: "vino_invalido" });
+      }
+      const rol = await verificarRol(userClient, userId);
+      if (!rol.ok) return responder(res, rol.status, rol.cuerpo);
+      const propio = await vinoPropio(userClient, { wineId: wineId.toLowerCase(), userId });
+      if (!propio.ok) return responder(res, 503, { error: propio.error.mensaje, codigo: "vino_no_disponible" });
+      if (!propio.visible) return responder(res, 404, { error: "No encontramos ese vino en tu cava.", codigo: "vino_no_encontrado" });
+      const r = await revocarReserva(crearCliente(supabaseUrl, serviceKey, OPCIONES_SERVIDOR), { userId, wineId: wineId.toLowerCase(), marca: MARCA_RESERVA });
+      if (!r.ok) return responder(res, 503, { error: r.error.mensaje, codigo: "reserva_no_quitada" });
+      return responder(res, 200, {
+        estado: "ok",
+        reserva: { wineId: wineId.toLowerCase(), estado: r.revocadas > 0 ? "quitada" : "no_habia_reserva" },
+      });
+    }
+
     const modo = req.body?.modo;
     if (MODOS_POSTERGADOS.includes(modo)) {
       return responder(res, 501, { error: "Esta forma de recomendación todavía no está disponible.", codigo: "modo_no_disponible" });
@@ -132,52 +178,51 @@ export function crearHandler(deps = {}) {
       });
     }
     const consulta = null;
-    const ref = validarRefinamiento(req.body);
-    if (!ref.ok) return responder(res, 400, { error: ref.error.mensaje, codigo: ref.codigo });
-    const refinamiento = ref.refinamiento;
 
-    // 2. Rol
-    try {
-      const { data: perfil, error } = await userClient.from("profiles").select("role").eq("id", userId).maybeSingle();
-      if (error) return responder(res, 503, { error: "No se pudo verificar tu perfil", codigo: "perfil_no_disponible" });
-      if (!perfil || !ROLES_CON_CAVA.includes(perfil.role)) {
-        return responder(res, 403, { error: "«¿Qué tomo?» está disponible para cuentas con cava propia", codigo: "sin_cava" });
-      }
-    } catch {
-      return responder(res, 503, { error: "No se pudo verificar tu perfil", codigo: "perfil_no_disponible" });
+    let refinamiento = null;
+    let reservar = null;
+    if (accion === "reservar") {
+      const v = validarReservar(req.body);
+      if (!v.ok) return responder(res, 400, { error: v.error.mensaje, codigo: v.codigo });
+      reservar = v.reservar;
+    } else {
+      const ref = validarRefinamiento(req.body);
+      if (!ref.ok) return responder(res, 400, { error: ref.error.mensaje, codigo: ref.codigo });
+      refinamiento = ref.refinamiento;
     }
 
-    // 3. Refinamiento: la sesión se verifica ANTES de leer su contexto.
+    // 2. Rol
+    const rol = await verificarRol(userClient, userId);
+    if (!rol.ok) return responder(res, rol.status, rol.cuerpo);
+
+    // 3. Refinamiento / reserva: la sesión se verifica ANTES de leer su
+    //    contexto.
+    const sesionId = refinamiento?.sesionId ?? reservar?.sesionId ?? null;
     let sesion = null;
-    if (refinamiento) {
-      const l = await verificarSesion(userClient, refinamiento.sesionId, userId, modo);
+    if (sesionId) {
+      const l = await verificarSesion(userClient, sesionId, userId, modo);
       if (!l.ok) return responder(res, l.status, l.cuerpo);
       sesion = l.sesion;
     }
 
     // 4. Contexto personal (stock vigente en cada pedido)
-    const ctx = await construirContexto(userClient, userId);
+    let ctx = await construirContexto(userClient, userId);
     if (!ctx.ok) {
       return responder(res, 503, { error: ctx.error.mensaje, codigo: "contexto_no_disponible", tipo: ctx.error.tipo });
     }
-    const resumenBiblioteca = (prep) => ({
-      ...recuperarCandidatos(ctx.contexto).resumen,
-      excluidosPorRestriccion: prep.sinCandidatos.excluidosPorRestriccion,
-      excluidosPorFiltro: prep.sinCandidatos.excluidosPorFiltro,
-    });
-
     const admin = () => crearCliente(supabaseUrl, serviceKey, OPCIONES_SERVIDOR);
+    const comunes = { motor, consulta, modo, tiempoLimiteMotorMs, userClient, userId };
 
     // ---------------------------------------------------------------------
     // A. Consulta nueva: tanda 1, sin filtros.
     // ---------------------------------------------------------------------
-    if (!refinamiento) {
+    if (!sesion) {
       const prep = preparar(ctx.contexto, []);
       if (!prep?.ok) return responder(res, 500, { error: "No se pudo preparar la recomendación", codigo: "seleccion_error" });
       // Sin candidatos: respuesta de hecho, sin motor ni sesión.
       if (prep.sinCandidatos) {
         return responder(res, 200, {
-          estado: "sin_candidatos", motivo: prep.sinCandidatos.motivo, recomendaciones: [], filtros: [], biblioteca: resumenBiblioteca(prep),
+          estado: "sin_candidatos", motivo: prep.sinCandidatos.motivo, recomendaciones: [], filtros: [], biblioteca: resumenBiblioteca(ctx.contexto, prep),
         });
       }
       const m = await correrMotor(motor, prep, consulta, modo, tiempoLimiteMotorMs);
@@ -206,70 +251,165 @@ export function crearHandler(deps = {}) {
     }
 
     // ---------------------------------------------------------------------
-    // B. Refinamiento: filtros acumulados + tanda siguiente, con reintento
-    //    si otro pedido escribió la sesión entre la lectura y la escritura.
+    // B. Refinamiento: nuevo filtro + tanda siguiente.
     // ---------------------------------------------------------------------
-    const adm = admin();
-    for (let intento = 1; intento <= MAX_INTENTOS_CONCURRENCIA; intento++) {
-      if (intento > 1) {
-        const l = await verificarSesion(userClient, refinamiento.sesionId, userId, modo);
-        if (!l.ok) return responder(res, l.status, l.cuerpo);
-        sesion = l.sesion;
-      }
-      const revision = revisionDe(sesion.context);
-      const tandaActual = Number.isInteger(sesion.context?.tanda) && sesion.context.tanda >= 1 ? sesion.context.tanda : TANDA_INICIAL;
-      const filtros = acumularFiltro(filtrosDeSesion(sesion.context), refinamiento.filtro);
-
-      const prep = preparar(ctx.contexto, filtros);
-      if (!prep?.ok) return responder(res, 500, { error: "No se pudo preparar la recomendación", codigo: "seleccion_error" });
-
-      // Sin candidatos: se guarda el filtro (la sesión sigue activa), sin
-      // tanda nueva ni motor.
-      if (prep.sinCandidatos) {
-        const w = await actualizarContextoSesion(adm, {
-          sesionId: sesion.id, userId, revisionEsperada: revision,
-          contexto: contextoDeSesion(sesion.context, { tanda: tandaActual, revision: (revision ?? 0) + 1, filtros }),
-        });
-        if (!w.ok) return responder(res, 503, { error: w.error.mensaje, codigo: "persistencia_error" });
-        if (!w.actualizada) continue;
-        return responder(res, 200, {
-          estado: "sin_candidatos", motivo: prep.sinCandidatos.motivo, sesionId: sesion.id, tanda: null,
-          filtros: describirFiltros(filtros), recomendaciones: [], biblioteca: resumenBiblioteca(prep),
-        });
-      }
-
-      const m = await correrMotor(motor, prep, consulta, modo, tiempoLimiteMotorMs);
-      if (!m.ok) return responder(res, m.status, m.cuerpo);
-      const valor = m.valor;
-
-      // Reserva de la tanda: la escritura condicionada asigna tandaActual + 1
-      // a un único pedido; el otro relee y toma la siguiente.
-      const tanda = tandaActual + 1;
-      const w = await actualizarContextoSesion(adm, {
-        sesionId: sesion.id, userId, revisionEsperada: revision,
-        contexto: contextoDeSesion(sesion.context, { tanda, revision: (revision ?? 0) + 1, filtros }),
-      });
-      if (!w.ok) return responder(res, 503, { error: w.error.mensaje, codigo: "persistencia_error" });
-      if (!w.actualizada) continue;
-
-      const it = await registrarItems(adm, sesion.id, valor.recomendaciones, tanda);
-      if (!it.ok) {
-        // La tanda quedó reservada sin items; la sesión sigue activa y el
-        // próximo pedido usará la tanda siguiente.
-        return responder(res, 503, { error: it.error.mensaje, codigo: "persistencia_error" });
-      }
-      return responder(res, 200, respuestaOk({ sesionId: sesion.id, tanda, filtros: describirFiltros(filtros), valor, items: it.items }));
+    if (refinamiento) {
+      const r = await generarTanda({ ...comunes, admin: admin(), contexto: ctx.contexto, sesion, nuevoFiltro: refinamiento.filtro, prioridad: ["temporal", "reserva"] });
+      return responder(res, r.status, r.cuerpo);
     }
-    return responder(res, 409, {
-      error: "La consulta se modificó al mismo tiempo desde otro pedido. Probá de nuevo.",
-      codigo: "conflicto_concurrente",
+
+    // ---------------------------------------------------------------------
+    // C. Reserva (7.4-B3): ítem de ESTA sesión con vino propio → reserva
+    //    explícita (idempotente) → tanda siguiente sin ese vino.
+    // ---------------------------------------------------------------------
+    const li = await leerItem(userClient, reservar.itemId);
+    if (!li.ok) return responder(res, 503, { error: li.error.mensaje, codigo: "item_no_disponible" });
+    const item = li.item;
+    if (!item || item.session_id !== sesion.id || item.relationship !== "owned" || !item.wine_id) {
+      return responder(res, 404, { error: "No encontramos esa recomendación en esta consulta.", codigo: "item_no_encontrado" });
+    }
+    const vino = ctx.contexto.biblioteca.find((w) => w.id === item.wine_id);
+    if (!vino) return responder(res, 404, { error: "Ese vino ya no está en tu cava.", codigo: "vino_no_encontrado" });
+
+    const adm = admin();
+    const id = idReserva(userId, vino.id);
+    const previa = await leerReserva(adm, { id, userId });
+    if (!previa.ok) return responder(res, 503, { error: previa.error.mensaje, codigo: "reserva_no_guardada" });
+    let estadoReserva = "ya_estaba_activa";
+    if (previa.reserva?.status !== "active") {
+      const g = await guardarReserva(adm, filaReserva({
+        userId,
+        wineId: vino.id,
+        identidad: identidadDeVino(vino),
+        evidencia: { origen: "elegir_de_mi_cava", sesionId: sesion.id, itemId: item.id, tanda: item.batch_no },
+      }));
+      if (!g.ok) return responder(res, 503, { error: g.error.mensaje, codigo: "reserva_no_guardada" });
+      estadoReserva = previa.reserva ? "reactivada" : "guardada";
+    }
+    const reserva = { id, wineId: vino.id, estado: estadoReserva };
+
+    // La reserva ya está guardada. La tanda se arma con el contexto RELEÍDO
+    // (incluye la reserva) y los filtros acumulados de la sesión, sin
+    // agregar la reserva como filtro temporal.
+    ctx = await construirContexto(userClient, userId);
+    const t = ctx.ok
+      ? await generarTanda({ ...comunes, admin: adm, contexto: ctx.contexto, sesion, nuevoFiltro: null, prioridad: ["reserva", "temporal"] })
+      : { status: 503, cuerpo: { error: ctx.error.mensaje, codigo: "contexto_no_disponible" } };
+    if (t.status === 200) return responder(res, 200, { ...t.cuerpo, reserva });
+    // Reserva guardada, tanda no generada: reintentar la misma acción no
+    // duplica la reserva (queda «ya_estaba_activa») y vuelve a pedir la tanda.
+    return responder(res, t.status, {
+      estado: "reserva_guardada_sin_tanda",
+      error: t.cuerpo.error,
+      codigo: t.cuerpo.codigo,
+      reintentable: true,
+      sesionId: sesion.id,
+      reserva,
     });
   };
 }
 
-function preparar(contexto, filtros) {
+// Tanda siguiente de una sesión verificada, con los filtros acumulados (más
+// `nuevoFiltro`, si hay) y control optimista por context.revision (7.4-B2):
+// si otro pedido escribió la sesión entre la lectura y la escritura, se
+// relee, se acumula y se reintenta. → { status, cuerpo }
+async function generarTanda({ motor, consulta, modo, tiempoLimiteMotorMs, userClient, userId, admin, contexto, sesion, nuevoFiltro, prioridad }) {
+  for (let intento = 1; intento <= MAX_INTENTOS_CONCURRENCIA; intento++) {
+    if (intento > 1) {
+      const l = await verificarSesion(userClient, sesion.id, userId, modo);
+      if (!l.ok) return l;
+      sesion = l.sesion;
+    }
+    const revision = revisionDe(sesion.context);
+    const tandaActual = Number.isInteger(sesion.context?.tanda) && sesion.context.tanda >= 1 ? sesion.context.tanda : TANDA_INICIAL;
+    const previos = filtrosDeSesion(sesion.context);
+    const filtros = nuevoFiltro ? acumularFiltro(previos, nuevoFiltro) : previos;
+
+    const prep = preparar(contexto, filtros, prioridad);
+    if (!prep?.ok) return { status: 500, cuerpo: { error: "No se pudo preparar la recomendación", codigo: "seleccion_error" } };
+
+    // Sin candidatos: la sesión sigue activa y se guarda el filtro nuevo (si
+    // lo hay), sin tanda nueva ni motor.
+    if (prep.sinCandidatos) {
+      if (filtros.length !== previos.length) {
+        const w = await actualizarContextoSesion(admin, {
+          sesionId: sesion.id, userId, revisionEsperada: revision,
+          contexto: contextoDeSesion(sesion.context, { tanda: tandaActual, revision: (revision ?? 0) + 1, filtros }),
+        });
+        if (!w.ok) return { status: 503, cuerpo: { error: w.error.mensaje, codigo: "persistencia_error" } };
+        if (!w.actualizada) continue;
+      }
+      return {
+        status: 200,
+        cuerpo: {
+          estado: "sin_candidatos", motivo: prep.sinCandidatos.motivo, sesionId: sesion.id, tanda: null,
+          filtros: describirFiltros(filtros), recomendaciones: [], biblioteca: resumenBiblioteca(contexto, prep),
+        },
+      };
+    }
+
+    const m = await correrMotor(motor, prep, consulta, modo, tiempoLimiteMotorMs);
+    if (!m.ok) return m;
+    const valor = m.valor;
+
+    // Reserva del número de tanda: la escritura condicionada asigna
+    // tandaActual + 1 a un único pedido; el otro relee y toma la siguiente.
+    const tanda = tandaActual + 1;
+    const w = await actualizarContextoSesion(admin, {
+      sesionId: sesion.id, userId, revisionEsperada: revision,
+      contexto: contextoDeSesion(sesion.context, { tanda, revision: (revision ?? 0) + 1, filtros }),
+    });
+    if (!w.ok) return { status: 503, cuerpo: { error: w.error.mensaje, codigo: "persistencia_error" } };
+    if (!w.actualizada) continue;
+
+    const it = await registrarItems(admin, sesion.id, valor.recomendaciones, tanda);
+    if (!it.ok) {
+      // La tanda quedó reservada sin items; la sesión sigue activa y el
+      // próximo pedido usará la tanda siguiente.
+      return { status: 503, cuerpo: { error: it.error.mensaje, codigo: "persistencia_error" } };
+    }
+    return { status: 200, cuerpo: respuestaOk({ sesionId: sesion.id, tanda, filtros: describirFiltros(filtros), valor, items: it.items }) };
+  }
+  return {
+    status: 409,
+    cuerpo: { error: "La consulta se modificó al mismo tiempo desde otro pedido. Probá de nuevo.", codigo: "conflicto_concurrente" },
+  };
+}
+
+// 7.4-B3: { accion: "reservar", modo: "cellar", sesionId, itemId }
+function validarReservar(body) {
+  const err = (codigo, mensaje) => ({ ok: false, error: { tipo: "validacion", mensaje }, codigo });
+  if (body?.restriccion !== undefined && body?.restriccion !== null) return err("accion_invalida", "Reservar y excluir una variedad son acciones separadas.");
+  if (typeof body?.sesionId !== "string" || !UUID.test(body.sesionId)) return err("sesion_invalida", "Identificador de consulta no válido.");
+  if (typeof body?.itemId !== "string" || !UUID.test(body.itemId)) return err("item_invalido", "Identificador de recomendación no válido.");
+  return { ok: true, reservar: { sesionId: body.sesionId.toLowerCase(), itemId: body.itemId.toLowerCase() } };
+}
+
+async function verificarRol(userClient, userId) {
   try {
-    return prepararCellar(contexto, { temporal: temporalDeFiltros(filtros) });
+    const { data: perfil, error } = await userClient.from("profiles").select("role").eq("id", userId).maybeSingle();
+    if (error) return { ok: false, status: 503, cuerpo: { error: "No se pudo verificar tu perfil", codigo: "perfil_no_disponible" } };
+    if (!perfil || !ROLES_CON_CAVA.includes(perfil.role)) {
+      return { ok: false, status: 403, cuerpo: { error: "«¿Qué tomo?» está disponible para cuentas con cava propia", codigo: "sin_cava" } };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, status: 503, cuerpo: { error: "No se pudo verificar tu perfil", codigo: "perfil_no_disponible" } };
+  }
+}
+
+function resumenBiblioteca(contexto, prep) {
+  return {
+    ...recuperarCandidatos(contexto).resumen,
+    excluidosPorRestriccion: prep.sinCandidatos.excluidosPorRestriccion,
+    excluidosPorFiltro: prep.sinCandidatos.excluidosPorFiltro,
+    excluidosPorReserva: prep.sinCandidatos.excluidosPorReserva,
+  };
+}
+
+function preparar(contexto, filtros, prioridad) {
+  try {
+    return prepararCellar(contexto, { temporal: temporalDeFiltros(filtros), prioridad });
   } catch {
     return null;
   }

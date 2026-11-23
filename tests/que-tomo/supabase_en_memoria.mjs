@@ -10,6 +10,9 @@
 //   barrera(n): las primeras n actualizaciones de recommendation_sessions
 //   esperan a que lleguen todas, para forzar pedidos simultáneos que leyeron
 //   la misma revisión.
+// 7.4-B3: upsert(filas, { onConflict: "id" }); RLS de recommendation_items
+//   (solo de sesiones propias) con el cliente del usuario; fallar("tabla:op")
+//   hace fallar esa operación (p. ej. "recommendation_items:insert").
 // Registra cada escritura en `escrituras` para verificar qué tablas se tocan.
 import crypto from "node:crypto";
 
@@ -39,9 +42,11 @@ export function crearBase(escenario) {
     recommendation_events: [],
   };
   const escrituras = [];
-  const control = { barrera: null };
+  const control = { barrera: null, fallas: new Set() };
   return {
     tablas, escrituras,
+    fallar(clave) { control.fallas.add(clave); },
+    reparar(clave) { control.fallas.delete(clave); },
     barrera(n) {
       let liberar;
       const abierta = new Promise((r) => { liberar = r; });
@@ -84,6 +89,7 @@ function clienteFalso(tablas, escrituras, { admin, control }) {
         range(a, b) { rango = [a, b]; return q; },
         insert(filas) { op = "insert"; carga = Array.isArray(filas) ? filas : [filas]; return q; },
         update(v) { op = "update"; carga = v; return q; },
+        upsert(filas) { op = "upsert"; carga = Array.isArray(filas) ? filas : [filas]; return q; },
         async maybeSingle() { const { data, error } = await ejecutar(); return { data: data[0] ?? null, error }; },
         async single() { const { data, error } = await ejecutar(); return { data: data[0] ?? null, error }; },
         then(ok, mal) { return ejecutar().then(ok, mal); },
@@ -91,6 +97,19 @@ function clienteFalso(tablas, escrituras, { admin, control }) {
       async function ejecutar() {
         const t = tablas[tabla];
         if (!t) return { data: null, error: { code: "42P01", message: `sin tabla ${tabla}` } };
+        if (control.fallas.has(`${tabla}:${op}`)) return { data: null, error: { code: "XX000", message: `falla simulada ${tabla}:${op}` } };
+        if (op === "upsert") {
+          await Promise.resolve();
+          const filas = carga.map((f) => {
+            const existente = t.find((x) => x.id === f.id);
+            if (existente) { Object.assign(existente, structuredClone(f), { updated_at: new Date().toISOString() }); return existente; }
+            const nueva = { created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...structuredClone(f) };
+            t.push(nueva);
+            return nueva;
+          });
+          escrituras.push({ tabla, op, filas });
+          return { data: filas.map((f) => proyectar(f, cols)), error: null };
+        }
         if (op === "insert") {
           const nuevas = carga.map((f) => ({ id: crypto.randomUUID(), created_at: new Date().toISOString(), started_at: new Date().toISOString(), ...f }));
           t.push(...nuevas);
@@ -105,6 +124,10 @@ function clienteFalso(tablas, escrituras, { admin, control }) {
         }
         let coinciden = t.filter((f) => filtros.every(([k, v]) => valorDe(f, k) === v));
         if (!admin && op === "select" && tabla === "recommendation_sessions") coinciden = coinciden.filter((f) => f.user_id === USUARIO);
+        if (!admin && op === "select" && tabla === "recommendation_items") {
+          const propias = new Set(tablas.recommendation_sessions.filter((x) => x.user_id === USUARIO).map((x) => x.id));
+          coinciden = coinciden.filter((f) => propias.has(f.session_id));
+        }
         if (op === "update") {
           for (const f of coinciden) Object.assign(f, structuredClone(carga));
           escrituras.push({ tabla, op, filas: coinciden });

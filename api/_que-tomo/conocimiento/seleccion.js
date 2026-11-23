@@ -29,6 +29,7 @@
 
 import { recuperarCandidatos } from "../candidatos.js";
 import { aplicaAVino } from "./explicito.js";
+import { esReserva } from "./reserva.js";
 import { normalizarContextoTemporal } from "./temporal.js";
 import { normalizarTexto } from "./normalizacion.js";
 import { fallo } from "../errores.js";
@@ -91,14 +92,19 @@ export function seleccionarParaConsulta({ contexto, perfil, extraccion }, consul
   const temporal = t.temporal;
 
   const persistentes = perfil.restricciones.persistentes;
+  // 7.4-B3: una reserva «para una ocasión especial» es un conocimiento
+  // explícito de alcance wine con la marca de reserva.js en `value` (nunca
+  // se lee `meaning`). Excluye ese vino de toda consulta mientras esté activa.
+  const reservas = perfil.explicito.conocimientoDeVinos.filter((k) => esReserva(k.valorRegistrado) && k.alcance.clave);
   const todas = [
     ...persistentes.map((r) => ({ origen: "persistente", id: r.id, alcance: r.alcance })),
+    ...reservas.map((r) => ({ origen: "reserva", id: r.id, alcance: r.alcance })),
     ...temporal.restricciones.map((r, i) => ({ origen: "temporal", id: `temporal:${i + 1}`, alcance: r.alcance })),
   ];
   const porId = new Map((contexto?.biblioteca || []).map((v) => [v.id, v]));
   const conocimientoPorVino = new Map();
   for (const k of perfil.explicito.conocimientoDeVinos) {
-    if (!k.alcance.clave) continue;
+    if (!k.alcance.clave || esReserva(k.valorRegistrado)) continue;
     if (!conocimientoPorVino.has(k.alcance.clave)) conocimientoPorVino.set(k.alcance.clave, []);
     conocimientoPorVino.get(k.alcance.clave).push(k.significado);
   }

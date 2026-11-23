@@ -44,7 +44,7 @@ test("motivos sin candidatos", () => {
     vinos: [{ id: v(1), varietal: "Malbec", stock: 3 }, { id: v(2), stock: 0 }],
     conocimiento: [{ knowledge_type: "restriction", scope_type: "wine", wine_id: v(1), wine_snapshot: { nombre: "Vino 1" }, meaning: "no me lo recomiendes" }],
   });
-  assert.deepEqual(r.prep.sinCandidatos, { motivo: MOTIVOS_SIN_CANDIDATOS.EXCLUIDOS, excluidosPorRestriccion: 1, excluidosPorFiltro: 0 });
+  assert.deepEqual(r.prep.sinCandidatos, { motivo: MOTIVOS_SIN_CANDIDATOS.EXCLUIDOS, excluidosPorRestriccion: 1, excluidosPorFiltro: 0, excluidosPorReserva: 0 });
 });
 
 test("cantidad: 1, 2 y 3 o más vinos elegibles", () => {

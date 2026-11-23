@@ -7,9 +7,10 @@
 //       7.3-B (construirConocimiento + seleccionarParaConsulta, modo
 //       'cellar'): solo vinos propios con stock > 0 que no alcanza ninguna
 //       restricción CONFIRMADA, persistente o temporal (7.4-B2: filtros de la
-//       sesión). Si no queda ninguno devuelve el motivo (biblioteca_vacia |
-//       sin_stock | excluidos_por_restriccion | excluidos_por_filtro) y el
-//       endpoint responde sin llamar al motor.
+//       sesión), ni una reserva activa (7.4-B3). Si no queda ninguno
+//       devuelve el motivo (biblioteca_vacia | sin_stock |
+//       excluidos_por_restriccion | excluidos_por_filtro |
+//       excluidos_por_reserva) y el endpoint responde sin llamar al motor.
 //
 //   motorCellar(entrada)      → ordena esos candidatos y redacta las
 //       explicaciones con reglas fijas. No vuelve a seleccionar, no lee la
@@ -67,6 +68,9 @@ export const MOTIVOS_SIN_CANDIDATOS = Object.freeze({
   // 7.4-B2: hay vinos disponibles que solo excluye un filtro TEMPORAL de la
   // sesión («hoy no quiero Malbec»); sin ese filtro habría candidatos
   EXCLUIDOS_POR_FILTRO: "excluidos_por_filtro",
+  // 7.4-B3: hay vinos disponibles que solo excluye una RESERVA «para una
+  // ocasión especial»; sin la reserva habría candidatos
+  EXCLUIDOS_POR_RESERVA: "excluidos_por_reserva",
 });
 
 const GRUPO = Object.freeze({ BUENA: 2, SIN_PUNTUAR: 1, BAJA: 0 });
@@ -77,11 +81,13 @@ const GRUPO = Object.freeze({ BUENA: 2, SIN_PUNTUAR: 1, BAJA: 0 });
 
 // contexto: representarContexto (7.3-A). temporal: entrada de
 // normalizarContextoTemporal (7.4-B2: filtros de la sesión; vacío en una
-// consulta nueva).
+// consulta nueva). prioridad: orden en que se nombra el motivo cuando lo
+// disponible quedó excluido a la vez por filtros y por reservas (7.4-B3: al
+// reservar, la reserva va primero).
 // → { ok: true, sinCandidatos: { motivo, ... } }
 // | { ok: true, entrada: { modo, candidatos, preferencias } }
 // | fallo
-export function prepararCellar(contexto, { temporal = {} } = {}) {
+export function prepararCellar(contexto, { temporal = {}, prioridad = ["temporal", "reserva"] } = {}) {
   const { perfil, extraccion } = construirConocimiento(contexto);
   const sel = seleccionarParaConsulta({ contexto, perfil, extraccion }, { modo: MODO_CELLAR, temporal });
   if (!sel.ok) return sel;
@@ -107,20 +113,32 @@ export function prepararCellar(contexto, { temporal = {} } = {}) {
 
   if (!candidatos.length) {
     const disponibles = biblioteca.filter((v) => v.hechos.disponibilidad.disponible).length;
-    // Sin candidatos y con stock: todo lo disponible quedó excluido. Si algún
-    // vino lo excluye SOLO un filtro temporal, sin el filtro habría
-    // candidatos → el motivo es el filtro, no la cava.
-    const soloPorFiltro = s.excluidos.filter((x) => x.motivos.every((m) => m.origen === "temporal")).length;
+    // Sin candidatos y con stock: todo lo disponible quedó excluido. Un vino
+    // alcanzado por una restricción PERSISTENTE seguiría excluido aunque se
+    // quiten filtros y reservas. Si algún vino lo excluyen solo filtros
+    // temporales y/o reservas, el motivo es ese (sin él habría candidatos),
+    // no la cava; si hay de los dos, decide `prioridad`.
+    const persistente = (x) => x.motivos.some((m) => m.origen === "persistente");
+    const levantables = s.excluidos.filter((x) => !persistente(x));
+    const cuenta = (origen) => levantables.filter((x) => x.motivos.some((m) => m.origen === origen)).length;
+    const porOrigen = { temporal: cuenta("temporal"), reserva: cuenta("reserva") };
+    const MOTIVO_DE = { temporal: MOTIVOS_SIN_CANDIDATOS.EXCLUIDOS_POR_FILTRO, reserva: MOTIVOS_SIN_CANDIDATOS.EXCLUIDOS_POR_RESERVA };
+    const levantable = prioridad.find((o) => porOrigen[o] > 0);
     const motivo = biblioteca.length === 0
       ? MOTIVOS_SIN_CANDIDATOS.BIBLIOTECA_VACIA
       : disponibles === 0
         ? MOTIVOS_SIN_CANDIDATOS.SIN_STOCK
-        : soloPorFiltro > 0
-          ? MOTIVOS_SIN_CANDIDATOS.EXCLUIDOS_POR_FILTRO
+        : levantable
+          ? MOTIVO_DE[levantable]
           : MOTIVOS_SIN_CANDIDATOS.EXCLUIDOS;
     return {
       ok: true,
-      sinCandidatos: { motivo, excluidosPorRestriccion: s.excluidos.length - soloPorFiltro, excluidosPorFiltro: soloPorFiltro },
+      sinCandidatos: {
+        motivo,
+        excluidosPorRestriccion: s.excluidos.length - levantables.length,
+        excluidosPorFiltro: porOrigen.temporal,
+        excluidosPorReserva: porOrigen.reserva,
+      },
     };
   }
 
