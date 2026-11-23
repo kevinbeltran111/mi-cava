@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 2.6 — gasto INPI y suscripciones recurrentes · **Fecha de corte:** 2026-11-22 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 2.7 — conciliación de visión, legal y centro de proyecto · **Fecha de corte:** 2026-11-23 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -18,6 +18,7 @@ Mi Cava es una biblioteca personal de vinos, no solo un inventario. Permite guar
 | Etapa 7.3 — Inteligencia y conocimiento personal | **CERRADA 22/11/2026**. 7.3-A (base autenticada, contexto, candidatos y soporte de sesiones) y 7.3-B (conocimiento personal y evidencias); integración 23/23 Docker Desktop, PR #8, merge `9a804a9`, Producción READY; sin nuevas migraciones; escrituras de inferencias desactivadas | 00 / 05.3; soporte técnico 99 |
 | Etapa 7.4 — «Elegir de mi cava» | **ABIERTA — diseño y desarrollo, publicación no autorizada**. Recomendar al entrar entre vinos con stock: una opción principal y hasta dos alternativas, refinamiento posterior; inicia medición | 00 / 05.4; soporte técnico 99 |
 | UX-21 — Ajustes de vistas | Cerrada; merge en main y cuatro verificaciones de Producción informadas como OK | 03 / 00 |
+| Etapa 7.5 — Otras puertas de «¿Qué tomo?» | Futuro: «Acompañar una comida» y «Quiero que me sorprendas» reservados para 7.5; sin implementación autorizada | 00 / 05.4 → futuro 05.5 |
 | Etapa 8 — Descubrir | Futuro, no autorizado | 00 |
 | Mobile — Android / iOS | Objetivo estratégico, ejecución sin programar | 00 / 99 |
 | Legal, privacidad y marca | Frente paralelo activo | 04 |
@@ -44,7 +45,7 @@ Estados posibles: **pendiente de evaluación**, **por verificar**, **en diseño*
 | UX-P11 | Utilidad y presentación de favoritos, puntuaciones y comentarios | Etapas 5–7 | Seguimiento de uso | Media | Feedback + inteligencia personal | 05 / 03 |
 | PRIV-01 | Privacidad, acceso y posible marca de agua en fotos | Etapa 6 / frente legal | Pendiente de análisis en frente específico | Alta antes de compartir públicamente | Revisión de Storage y futuro Descubrir | 04 / 99 |
 | LEG-01 | Términos, privacidad, cookies, tratamiento de imágenes y proveedores | Frente legal | En análisis | Alta antes de apertura amplia | Trabajo jurídico 04 | 04 |
-| M01 | Protección de marcas Mi Cava / CavaVinos en Argentina | Frente 04.1 | En análisis; presentación no autorizada | Alta estratégica | Arquitectura → clases → antecedentes → titular → costos | 04.1 |
+| M01 | Protección de marcas Mi Cava / CavaVinos en Argentina | Frente 04.1 | En análisis; arancel de búsqueda fonética de MI CAVA clase 42 abonado 23/11/2026 (INV-006); búsqueda pendiente de acreditación/resultado; **no confundir búsqueda con solicitud de registro marcario** | Alta estratégica | Acreditación, resultado y evaluación de antecedentes → titular y estrategia de presentación | 04.1 |
 | L01 | Estructura jurídica y titularidad de activos | Frente 04 | Futuro según secuencia aprobada | Media | Tras avance M01 | 04 |
 | SOC-01 | Descubrir, Cavas compartidas, visibilidad y rol viewer | Roadmap | Futuro | Por definir | Después de consolidar valor personal y privacidad | 00 |
 | MOB-01 | Aplicación móvil Android e iOS | Visión del producto | Objetivo confirmado; no iniciado | Estratégica, ejecución sin fecha | Evaluar momento tras validar producto | 00 / 99 |
@@ -167,3 +168,38 @@ La apertura no habilita desplegar, crear migraciones ni activar escrituras de in
 **Nota:** *La fecha del gasto OpenAI proviene del momento de registro recuperado, no de un comprobante verificado. Revisar al conciliar gastos.*
 
 **Seguimiento automático propuesto (23/11/2026):** mantener una tabla separada de suscripciones (proveedor, importe esperado, moneda, periodicidad mensual, fecha de próximo débito por confirmar, estado activa/pausada) y movimientos reales. El Site puede generar vencimientos previstos y recordatorios; una imputación automática como *pagada* requiere verificación autorizada de la transacción o confirmación del usuario. Las ediciones del Site se guardan como propuestas locales hasta conciliar con GitHub. Evitar duplicados por período, proveedor e ID. No hay automatización de contabilización aprobada todavía.
+
+## Consolidación transversal y acceso al proyecto (23/11/2026)
+**Objetivo confirmado:** el usuario necesita dos vistas de la MISMA historia: (a) `Mi Cava — Centro de Proyecto`, tablero privado, interactivo, con etapas, hitos, pins, decisiones y gastos; y (b) un Archivo Maestro detallado, consultable y versionado. No tratar la copia importada al Site como fuente definitiva si diverge del documento de GitHub.
+
+### Estado de las herramientas, pendiente de comprobación operativa
+- **GitHub:** este `ROADMAP_MAESTRO.md` está en rama `docs/roadmap-maestro-v2` y no en `main`; continúa como archivo oficial de trabajo/versionado. La estructura puede ampliarse sin alterar el producto.
+- **Site:** se informó creación y despliegue privado de una primera versión; ediciones posteriores con mejoras de roadmap, colores y «Historial de cambios», y una versión de revisión con gastos y suscripciones. **El estado de despliegue exacto de esta última versión debe comprobarse**. No asumir que la última edición de revisión ya se encuentra en vivo.
+- **Datos del Site:** el tablero representa una instantánea del roadmap y guarda ediciones propias como propuestas; no hay sincronización bidireccional confirmada. Los pagos y cambios de estado que surjan en Site deben conciliarse con el registro documental por ID y versión.
+- **Privacidad:** el Site se informó de acceso restringido; el repositorio GitHub `kevinbeltran111/mi-cava` es público. No incluir información personal sensible, secretos ni detalles internos de seguridad en su documentación pública.
+
+### Brechas históricas identificadas — no equivalen a tareas de desarrollo
+| Área | Qué falta consolidar | Fuente de contraste | Estado |
+|---|---|---|---|
+| Etapas 1–4 | Descripción, entregables, decisiones, fechas y evidencias de cierre | Historial temprano / GitHub | Por recuperar y verificar |
+| Etapa 5 | Detalle de abrir botella, stock, consumos, puntuación y experiencia sin stock | Conversación 02 y cambios de código | Hito principal cerrado; detalle documental por completar |
+| Etapa 6 | Resultado actual de UX-P01 a UX-P11; distinguir correcciones ya publicadas de ideas pendientes | Conversación 03, testers, producción | En conciliación |
+| Etapa 7.1 | Alcance final, estructura y pruebas de datos de inteligencia | Conversación 05, migraciones y documentación | Por verificar |
+| Etapas 7.2 / 7.3 | Localización de actas y procedimientos completos; actualizar referencias comprobables | Conversaciones 05.2 y 05.3, PR #7 y #8 | Hitos cerrados; documentación parcial ubicada |
+| Etapa 7.4 | Subbloques, decisiones detalladas y estado real de integración; no inferir despliegues | Conversación 05.4 | En desarrollo, conciliación continua |
+| Marca M01 | Estado de búsqueda fonética, acreditación y decisión de registro marcario | Conversación 04.1 / INPI | Pago de búsqueda confirmado; resultado por verificar |
+| Legal L01 / LEG-01 / PRIV-01 | Titularidad de activos, documentos legales, cookies, imágenes, privacidad y fechas de revisión | Conversación 04 | Frente paralelo sin cierre inferido |
+| Infraestructura SEC-01 / TECH-01 | Estado efectivo de seguridad, migraciones, auditorías y deuda técnica | Conversación 99 | Análisis por realizar; sin cambios autorizados |
+| Finanzas | Conciliar seis movimientos, comprobantes y nuevos débitos; mantener previstos separados de pagados | Conversación Registrar gastos de inversión y Site | Seis movimientos asentados; sincronización pendiente |
+
+### Reglas operativas para cerrar la conciliación
+1. **Un ID, un registro.** Nuevas pruebas o decisiones enriquecen un ID preexistente; no lo duplican.
+2. **Una etapa puede cerrarse con pendientes residuales.** Los pendientes conservan estado propio sin reabrir por defecto el hito.
+3. **Prueba de cierre:** registrar evidencia de código/PR, validación y publicación como hechos distintos. Si solo hay confirmación conversacional, atribuirla claramente.
+4. **Preservar el historial de decisiones descartadas** con motivo, fecha/fuente disponible y eventual disparador de revisión.
+5. **No sumar costos proyectados al pagado.** El documento financiero mantiene subtotales ARS/USD y el Site no genera pagos reales solo por alcanzar un vencimiento.
+6. **Las actualizaciones del Site no quedan automáticamente en GitHub.** Hasta que haya integración validada, el cambio debe importarse/conciliarse explícitamente.
+7. **No se autorizan implementaciones por actualizar el roadmap.** Antes de mergear este archivo a `main`, revisar contenidos, riesgos de publicar datos y posibles conflictos con cambios documentales posteriores.
+
+### Orden recomendado de recuperación (no bloquea Etapa 7.4)
+1. Completar Etapas 1–6 y el inventario UX histórico; 2. precisar Etapas 7.1 y 7.4; 3. conciliar estado de Legal/Marca/99; 4. incorporar referencias y enlaces accesibles desde el Site; 5. probar consistencia por IDs y conciliación Site ↔ GitHub.
