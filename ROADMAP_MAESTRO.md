@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 2.8 — reconstrucción histórica y conciliación técnica · **Fecha de corte:** 2026-11-23 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 2.9 — conciliación de UX-P01 a UX-P11 · **Fecha de corte:** 2026-11-23 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -32,17 +32,17 @@ Estados posibles: **pendiente de evaluación**, **por verificar**, **en diseño*
 | UX-22 | Personalidad e interacción del onboarding: microinteracciones y respuestas visuales manteniendo elegancia | 7.2-B, validación 15/11/2026 (14/14 funcional) | Pendiente de evaluación; no bloqueó cierre de 7.2 | Media provisional | Feedback de testers | 05 / 03 |
 | SEC-01 | Revisar hallazgos preexistentes de seguridad de Supabase/Auth; determinar exposición efectiva y medidas | Revisión previa a publicación 7.2, 15/11/2026 | Pendiente de análisis; sin cambios autorizados | Alta para análisis | Antes de ampliar beta; revisión técnica específica | 99 |
 | DATA-01 | Normalización de origen: provincia vs región; Valle de Uco / Uco Valley / Mendoza | Etapas 6 y 7 | Pendiente de evaluación | Media | Cuando filtros o inteligencia requieran origen confiable | 05 / 99 |
-| UX-P01 | Imagen principal clickeable para iniciar foto/galería | Feedback beta Etapa 6 | Por verificar si ya se resolvió | Por definir | Conciliación con Producción | 03 |
-| UX-P02 | Miniatura de fotografía en revisión de datos | Feedback beta Etapa 6 | Por verificar | Por definir | Conciliación con Producción | 03 |
-| UX-P03 | Navegación «Atrás» en alta de vino | Feedback beta Etapa 6 | Por verificar | Por definir | Conciliación con Producción | 03 |
-| UX-P04 | Redundancia de «Prefiero cargar a mano» | Feedback beta Etapa 6 | Por verificar | Por definir | Conciliación con Producción | 03 |
-| UX-P05 | Fotografías con varias botellas | Feedback beta Etapa 6 | Por verificar | Por definir | Validar incidencia y tratamiento actual | 03 |
-| UX-P06 | Ilustración/ícono de copa y consistencia visual | Feedback beta Etapa 5/6 | Intervención previa informada; verificar si resta algo | Por definir | Conciliación con Producción | 03 |
-| UX-P07 | Tutorial inicial / globos de ayuda | Ideas Etapa 6 | Pendiente de evaluación | Baja provisional | Solo con evidencia de dificultad de uso | 03 |
-| UX-P08 | Consistencia de nombre «Mi Cava» vs «Cava Vinos» | Etapa 6 / marca | Pendiente de evaluación | Media | Definición de arquitectura de marca | 04 / 03 |
-| UX-P09 | Refresco/loader al regresar a la app | Etapa 6 | Por verificar | Por definir | Reproducción con beta | 03 |
-| UX-P10 | Historial global de consumos, además del historial por vino | Etapa 5/6 | Pendiente de evaluación | Baja provisional | Feedback de beta | 03 / 00 |
-| UX-P11 | Utilidad y presentación de favoritos, puntuaciones y comentarios | Etapas 5–7 | Seguimiento de uso | Media | Feedback + inteligencia personal | 05 / 03 |
+| UX-P01 | Imagen principal clickeable para iniciar foto/galería | Feedback beta Etapa 6 | Implementado en código de main: superficie fotográfica abre selector cámara/galería; comportamiento táctil y accesibilidad por validar | Por definir | Verificar en móvil y teclado antes de cierre UX | 03 |
+| UX-P02 | Miniatura de fotografía en revisión de datos | Feedback beta Etapa 6 | Implementado en código de main: imagen visible y ampliable en «Revisá los datos»; presentación en dispositivos por validar | Por definir | Prueba visual de alta real | 03 |
+| UX-P03 | Navegación «Atrás» en alta de vino | Feedback beta Etapa 6 | Implementado en código de main: botón Atrás entre selección y revisión; conserva foto y borrador; prueba UX por validar | Por definir | Prueba de retroceso y preservación de datos | 03 |
+| UX-P04 | Redundancia de «Prefiero cargar a mano» | Feedback beta Etapa 6 | Cambio implementado en main: carga manual solo como recuperación si falla IA; decisión de descubribilidad/accessibilidad por evaluar | Por definir | Validar caminos sin IA y con fallo; no concluir UX cerrada | 03 |
+| UX-P05 | Fotografías con varias botellas | Feedback beta Etapa 6 | Implementado tratamiento en código de main: si IA indica múltiples vinos, solicita otra foto sin seleccionar uno arbitrariamente; respuesta de IA no validada aquí | Por definir | Prueba con foto real de varias etiquetas | 03 |
+| UX-P06 | Ilustración/ícono de copa y consistencia visual | Feedback beta Etapa 5/6 | En código actual hay íconos Wine/placeholder; juicio de consistencia visual sin verificar | Por definir | Revisión visual con capturas / beta | 03 |
+| UX-P07 | Tutorial inicial / globos de ayuda | Ideas Etapa 6 | Idea pendiente de evaluación, no deducir necesidad por existencia de onboarding | Baja provisional | Feedback de testers nuevos; evitar tutorial si no hace falta | 03 |
+| UX-P08 | Consistencia de nombre «Mi Cava» vs «Cava Vinos» | Etapa 6 / marca | Pendiente por decisión de arquitectura marcaria M01; no confirmado conflicto en UI actual | Media | Conciliar marca M01 y textos visibles | 04 / 03 |
+| UX-P09 | Refresco/loader al regresar a la app | Etapa 6 | Parcialmente abordado en main: recargas posteriores mantienen grilla visible y descartan resultados obsoletos; caso específico volver a pestaña/app sin probar | Por definir | Reproducir retorno a app, foco de pestaña y conectividad | 03 |
+| UX-P10 | Historial global de consumos, además del historial por vino | Etapa 5/6 | No se verificó pantalla global; el código confirma «Tus experiencias» por vino; propuesta de historial global pendiente de evaluación | Baja provisional | Feedback y utilidad del acceso global | 03 / 00 |
+| UX-P11 | Utilidad y presentación de favoritos, puntuaciones y comentarios | Etapas 5–7 | Capacidades presentes: corazón en ficha/vistas/filtro; promedio de puntuaciones derivado de consumos; experiencias por vino; utilidad con testers sigue en evaluación | Media | Medir uso real, sin cerrar por mera existencia de controles | 05 / 03 |
 | PRIV-01 | Privacidad, acceso y posible marca de agua en fotos | Etapa 6 / frente legal | Pendiente de análisis en frente específico | Alta antes de compartir públicamente | Revisión de Storage y futuro Descubrir | 04 / 99 |
 | LEG-01 | Términos, privacidad, cookies, tratamiento de imágenes y proveedores | Frente legal | En análisis | Alta antes de apertura amplia | Trabajo jurídico 04 | 04 |
 | M01 | Protección de marcas Mi Cava / CavaVinos en Argentina | Frente 04.1 | En análisis; arancel de búsqueda fonética de MI CAVA clase 42 abonado 23/11/2026 (INV-006); búsqueda pendiente de acreditación/resultado; **no confundir búsqueda con solicitud de registro marcario** | Alta estratégica | Acreditación, resultado y evaluación de antecedentes → titular y estrategia de presentación | 04.1 |
@@ -243,3 +243,26 @@ El `supabase/README.md` indica migración `20261025000000_etapa7_modelo_intelige
 
 ### Siguiente bloque de conciliación
 Recuperar el mapa formal de etapas 1–4 de sus registros originales; después, verificar cada `UX-P0x` de Etapa 6 contra sus cierres y la UI real. El hallazgo documental no habilita modificaciones técnicas o de seguridad.
+
+## Conciliación de los 11 pins históricos de UX de Etapa 6 (23/11/2026)
+**Fuente examinada:** `src/App.jsx` en `main`, en sus segmentos de alta/foto, ficha/experiencias, estado, filtros y carga; `README.md` y antecedentes de PR #2 (UX-20) / cambios de UX-21. **No se ejecutó la aplicación ni se comprobó el despliegue con un usuario real.** En consecuencia, «implementado en código» no equivale por sí solo a «cerrado y validado en Producción».
+
+| Pin | Evidencia encontrada en código | Estado documental recomendado |
+|---|---|---|
+| UX-P01 | Superficie fotográfica interactiva y panel con inputs separados para cámara y galería (`setShowPhotoSourceSheet`, `cameraInputRef`, `galleryInputRef`). | Funcionalidad implementada; prueba táctil/accesibilidad pendiente. |
+| UX-P02 | En «Revisá los datos» se muestra `draft.foto` y un toque abre zoom (`setShowPhotoZoom`). | Funcionalidad implementada; confirmar experiencia visual. |
+| UX-P03 | `canGoBack` / `goBack` y botón `aria-label="Atrás"`; el borrador y la foto se conservan. | Funcionalidad implementada; validar recorrido completo. |
+| UX-P04 | La alternativa manual inicial fue retirada de la superficie principal; `Completar los datos manualmente` aparece como recuperación tras error de IA. | Decisión de interfaz materializada; validar que el usuario pueda avanzar sin IA en situaciones relevantes. No marcar resuelto por defecto. |
+| UX-P05 | `runIdentify` distingue `multiples_vinos`, indica «Veo más de un vino en la foto» y permite «Elegir otra foto». | Ruta implementada; comportamiento de detección real por probar. |
+| UX-P06 | Iconos `Wine` y placeholders, sin prueba visual ni cierre verificable para el comentario histórico. | Mantener por verificar. |
+| UX-P07 | La existencia de onboarding 7.2 no prueba que sea necesario ni deseable un tutorial adicional de alta. | Mantener evaluación condicionada a feedback. |
+| UX-P08 | Persisten expresiones de producto y referencias a nombres históricos; M01 define estrategia marcaria. | Mantener evaluación ligada a M01. |
+| UX-P09 | `hasLoadedOnceRef` mantiene grilla visible en recargas posteriores; `loadSeqRef` evita que cargas solapadas se pisen. | **Parcialmente mitigado en código**. Retorno de foco / recarga al volver a la app sigue sin prueba. |
+| UX-P10 | `Tus experiencias` figura en la ficha individual; esta evidencia no acredita historial global de consumos. | Mantener pendiente de evaluación, sin crear defecto. |
+| UX-P11 | Favorito directo desde ficha y en vistas compactas; filtro `Solo favoritos`; promedio derivado de `consumos.puntuacion`, experiencias con comida/comentario por vino. | Funcionalidad presente; utilidad y presentación siguen bajo seguimiento. |
+
+**Resultado de esta pasada:** 5 funcionalidades originales materializadas en el código (`UX-P01` a `UX-P05`), 1 caso mitigado parcialmente (`UX-P09`), y 5 ítems de evaluación o revisión histórica (`UX-P06`, `UX-P07`, `UX-P08`, `UX-P10`, `UX-P11`). **Cero pins dados por cerrados en Producción en esta pasada** por falta de prueba específica. El detalle del resultado se enlaza a los IDs preexistentes, sin duplicar tareas.
+
+**Precaución adicional:** la evidencia leída de la interfaz de alta muestra que la carga manual solo aparece al fallar la IA; esto es una decisión UX potencialmente relevante para accesibilidad y conexiones limitadas, no una autorización para cambiarla. Revisar con criterio del producto antes de emitir instrucciones de implementación.
+
+**Próximo contraste prioritario:** probar en la beta actual los caminos concretos de foto, regreso, revisión y varios vinos, y recuperar cierres comunicados en conversación 03, si están disponibles. Un resultado satisfactorio puede convertir «implementado» en «cerrado», con fecha y evidencia. Mantener separado este trabajo del desarrollo activo de la Etapa 7.4.
