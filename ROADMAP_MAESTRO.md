@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 2.4 — cierre de Etapa 7.3 y apertura de 7.4 · **Fecha de corte:** 2026-11-22 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 2.5 — registro de inversión y gastos · **Fecha de corte:** 2026-11-22 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -143,3 +143,24 @@ Con 7.2 cerrada, el foco funcional de Etapa 7 pasa al diseño y desarrollo contr
 **Fuera del alcance de 7.4 y reservado para 7.5:** «Acompañar una comida» y «Quiero que me sorprendas».
 
 La apertura no habilita desplegar, crear migraciones ni activar escrituras de inferencias. Se requiere autorización separada para toda implementación/publicación que la necesite.
+
+## Inversión y gastos del proyecto — registro inicial
+**Origen:** conversación del Proyecto «Registrar gastos de inversión», iniciada en septiembre de 2026; ampliada con gasto OpenAI en noviembre. **Responsable:** 00 / registro de inversión. **Estado:** registro histórico confirmado por el usuario; comprobantes, cotizaciones y posibles gastos adicionales pendientes de conciliación. Esta sección conserva las monedas originales: no sumar ARS y USD entre sí ni asignar un equivalente sin fecha, tipo de cambio y criterio explícitos.
+
+| ID | Fecha registrada | Concepto | Moneda | Importe | Observaciones |
+|---|---|---|---|---:|---|
+| INV-001 | 2026-09-20 | Créditos Anthropic | USD | 5,00 | Compra de créditos |
+| INV-002 | 2026-09-23 | Vercel | USD | 9,99 | Gasto reportado |
+| INV-003 | 2026-09-23 | Dominio NIC | ARS | 8.500,00 | Registro de dominio |
+| INV-004 | 2026-10-02 | Claude Pro | USD | 20,00 | Gasto reportado |
+| INV-005 | 2026-11-14* | OpenAI | USD | 20,00 | Fecha asociada al agregado del registro; pendiente de confirmar contra comprobante |
+
+**Total registrado (sin conversiones):** **ARS 8.500,00** + **USD 54,99**. Son subtotales en monedas diferentes, no un monto conjunto convertible por simple suma.
+
+**Alcance del registro:** costos efectivamente comunicados; no implica que se hayan identificado todos los costos, que sean recurrentes en cada período ni que exista una categoría fiscal o contable definida. No proyectar suscripciones como cargos futuros ni inventar cuotas.
+
+**Reglas para nueva incorporación:** fecha de transacción, concepto/proveedor, moneda, monto, categoría (dominio, infraestructura, IA, otros), periodicidad si fue informada, comprobante opcional, notas y fuente. Usar un ID `INV-` estable para cada movimiento, prevenir duplicados por proveedor-fecha-monto, y guardar quién/ cuándo lo agregó o corrigió.
+
+**Requisitos para la visualización en «Mi Cava — Centro de Proyecto»:** sección independiente **«Inversión y gastos»** en navegación; tarjetas de subtotal por moneda (ARS y USD), tabla cronológica con filtros por proveedor, categoría, fecha y moneda, formulario de alta/edición y exportación CSV/XLSX si está disponible; opcionalmente conversión a una moneda de referencia con cotización, fecha y criterio transparentes. Conservar `INV-` y el historial de cambios. Si el Site guarda ediciones en D1 como propuestas, **no presentarlas como sincronizadas con GitHub** hasta tener mecanismo de conciliación. No alterar otros IDs del backlog ni confundir movimientos financieros con pendientes.
+
+**Nota:** *La fecha del gasto OpenAI proviene del momento de registro recuperado, no de un comprobante verificado. Revisar al conciliar gastos.*
