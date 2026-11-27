@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 3.2 — diagnóstico de conciliación Site ↔ Archivo Maestro · **Fecha de corte:** 2026-11-27 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 3.3 — contrato funcional «¿Qué tomo?» v1.0 y cambio de fase 7.4 · **Fecha de corte:** 2026-11-27 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -16,9 +16,9 @@ Mi Cava es una biblioteca personal de vinos, no solo un inventario. Permite guar
 | Etapa 7.1 — Datos de inteligencia | Migración de modelo de inteligencia registrada como aplicada en Producción en revisión del 09/11/2026; validación y antecedentes documentados; conservar controles pendientes de seguridad por SEC-01 | 05 / 99 |
 | Etapa 7.2 — Onboarding | **CERRADA 15/11/2026**. Migración 7.2-A aplicada/verificada; frontend 7.2-B publicado PR #7, merge f729c2f; Preview 14/14, Producción 6/6; monitoreo sin 4xx/5xx (cierre informado por usuario) | 05 |
 | Etapa 7.3 — Inteligencia y conocimiento personal | **CERRADA 22/11/2026**. 7.3-A (base autenticada, contexto, candidatos y soporte de sesiones) y 7.3-B (conocimiento personal y evidencias); integración 23/23 Docker Desktop, PR #8, merge `9a804a9`, Producción READY; sin nuevas migraciones; escrituras de inferencias desactivadas | 00 / 05.3; soporte técnico 99 |
-| Etapa 7.4 — «Elegir de mi cava» | **ABIERTA — diseño y desarrollo, publicación no autorizada**. Recomendar al entrar entre vinos con stock: una opción principal y hasta dos alternativas, refinamiento posterior; inicia medición | 00 / 05.4; soporte técnico 99 |
+| Etapa 7.4 — «¿Qué tomo?» (experiencia integral) | **ABIERTA — diseño funcional v1.0 consolidado el 27/11/2026; diagnóstico técnico solicitado/en ejecución; implementación y pruebas integradas pendientes; Producción suspendida**. Una experiencia conversacional con tres puertas opcionales; 16 casos de aceptación QT-01…QT-16 | 00 / 05.4; soporte técnico 99 |
 | UX-21 — Ajustes de vistas | Cerrada; merge en main y cuatro verificaciones de Producción informadas como OK | 03 / 00 |
-| Etapa 7.5 — Otras puertas de «¿Qué tomo?» | Futuro: «Acompañar una comida» y «Quiero que me sorprendas» reservados para 7.5; sin implementación autorizada | 00 / 05.4 → futuro 05.5 |
+| Etapa 7.5 — Alcance histórico de otras puertas | **Antecedente de planificación reemplazado en diseño el 27/11/2026**: las tres puertas se integran funcionalmente en una sola experiencia «¿Qué tomo?»; no implica implementación ni cierre de 7.5. La numeración/alcance técnico futuro queda sujeto al diagnóstico, sin crear un segundo asistente | 00 / 05.4; eventual 05.5 por definir |
 | Etapa 8 — Descubrir | Futuro, no autorizado | 00 |
 | Mobile — Android / iOS | Objetivo estratégico, ejecución sin programar | 00 / 99 |
 | Legal, privacidad y marca | Frente paralelo activo | 04 |
@@ -141,9 +141,50 @@ Con 7.2 cerrada, el foco funcional de Etapa 7 pasa al diseño y desarrollo contr
 
 **Decisión de producto aprobada:** al entrar, recomendar directamente entre **vinos con stock**, con **una opción principal y hasta dos alternativas**. El usuario podrá **refinar o corregir después**. La **medición comienza en 7.4**.
 
-**Fuera del alcance de 7.4 y reservado para 7.5:** «Acompañar una comida» y «Quiero que me sorprendas».
+**Antecedente de alcance (22/11/2026; posteriormente revisado el 27/11/2026):** «Acompañar una comida» y «Quiero que me sorprendas» estaban reservados para 7.5. El **Contrato funcional v1.0** consolidó ambas puertas junto con «Elegir de mi cava» como una experiencia conversacional única. Se conserva la decisión histórica para trazabilidad, pero **ya no rige como separación funcional de asistentes**. El nuevo alcance no autoriza desarrollo ni publicación.
 
 La apertura no habilita desplegar, crear migraciones ni activar escrituras de inferencias. Se requiere autorización separada para toda implementación/publicación que la necesite.
+
+## HITO 7.4 — Contrato funcional integral de «¿Qué tomo?» v1.0 consolidado (27/11/2026)
+
+**Tipo:** hito de **diseño funcional**, no cierre de Etapa 7.4. **Frente:** 05 — Inteligencia y recomendaciones. **Responsabilidad:** 05.4 (diseño y continuidad) / 00 (gobernanza), soporte técnico 99 según diagnóstico. **Estado de etapa:** ABIERTA. **Publicación:** EXPRESAMENTE SUSPENDIDA.
+
+**Entregable y fuente primaria:** «Contrato funcional de ¿Qué tomo? — Versión 1.0 (27/11/2026)», redactado en la conversación de diseño de «¿Qué tomo?» del proyecto Mi Cava. Este apartado **solo registra el hito y las decisiones**: no sustituye el contrato íntegro, que debe mantenerse accesible y enlazarse cuando se disponga de su referencia estable. Su contenido informado cubre objetivo y valor diferencial; arquitectura de experiencia única; interpretación de intenciones libres; reglas para preguntar/recomendar; presentación de recomendación; refinamiento; comportamiento de las tres puertas; memoria y conocimiento personal; consultas enológicas; cierre/acciones; excepciones; reutilización técnica; criterios de cierre/publicación y **16 casos de aceptación, QT-01 a QT-16**. No inventar el texto individual de esos casos a partir de este resumen.
+
+**Hito alcanzado:** consolidación funcional de «¿Qué tomo?» en **una experiencia conversacional** con tres puertas opcionales: **«Elegir de mi cava»**, **«Acompañar una comida»** y **«Quiero que me sorprendas»**.
+
+### Decisiones funcionales aprobadas (27/11/2026; no reabrir sin justificación técnica concreta)
+1. «¿Qué tomo?» es una única experiencia, no tres asistentes independientes.
+2. La conversación libre está disponible desde el primer momento.
+3. Las tres puertas son accesos rápidos opcionales.
+4. Se prioriza lo que el usuario quiere tomar, no únicamente sus restricciones.
+5. Mi Cava recomienda enseguida cuando tiene información suficiente y pregunta solo cuando hace falta.
+6. La recomendación principal puede acompañarse de hasta dos alternativas.
+7. El usuario puede refinar libremente, sin perder el contexto.
+8. Se combinan conocimiento enológico y datos personales reales, sin inventar información.
+9. El asistente también puede responder consultas enológicas que no impliquen recomendar una botella.
+10. La personalización debe aportar valor real frente a respuestas genéricas de asistentes generalistas.
+11. Reutilizar la base técnica ya desarrollada en 7.3 y 7.4; evitar reconstruir el recomendador.
+12. **No publicar** hasta diseñar, implementar y probar satisfactoriamente la experiencia completa y obtener autorización expresa.
+
+### Antecedente y alcance de la transición
+- **Preview técnico 7.4:** las dos pruebas con la cuenta con vinos cargados y los caminos técnicos revisados se informaron satisfactorios; preservar implementaciones, commits, pruebas y evidencias históricas, **sin declararlos validación de la nueva experiencia integral**.
+- **Motivo del cambio:** la UX se percibió como formulario cerrado, excesivamente centrado en opciones negativas y sin conversación libre real. Se mantiene la base técnica, cambiando el enfoque de interfaz e interacción.
+- **7.5 histórico:** las dos puertas adicionales se habían postergado a 7.5; esta separación queda superada **en diseño funcional**, no borrada del historial ni automáticamente resuelta en código.
+- **Publicación:** incluso una autorización anterior, posteriormente dejada en pausa, **no habilita desplegar** la nueva experiencia; será necesaria una nueva autorización expresa luego de aceptación integrada.
+
+### Seguimiento de fase y trazabilidad (no sumar a los 27 pins existentes)
+| Seguimiento | Estado al 27/11/2026 | Evidencia / criterio de avance | Responsable |
+|---|---|---|---|
+| CF-QT-10 — Contrato funcional v1.0 | **Consolidado como diseño** | Texto íntegro en conversación de diseño; pendiente enlazar fuente/archivo estable | 05.4 / 00 |
+| DG-QT-10 — Diagnóstico de brechas 7.3/7.4 | **Solicitado a Claude; en ejecución según último reporte**, resultado no recibido aquí | Matriz implementado/parcial/ausente, componentes reutilizables, arquitectura conversacional, dependencias, riesgos y plan por bloques | 05.4 / 99 |
+| DEV-QT-10 — Implementación integral | **Pendiente de autorización** | Revisar diagnóstico y autorizar expresamente bloques; no reconstruir motor existente | 05.4 / 99 |
+| QA-QT-10 — Aceptación QT-01…QT-16 | **Pendiente** | Probar el texto íntegro de los 16 casos y la integración de las tres puertas, conversaciones/refinamientos/consultas/excepciones | 05.4 / 00 |
+| PUB-QT-10 — Publicación Producción | **Suspendida; no autorizada** | Evaluar experiencia completa y pruebas; nueva autorización expresa | 00 |
+
+**Regla de transición:** el siguiente paso es **recibir y revisar el diagnóstico** antes de decidir arquitectura o implementación. El diagnóstico no reabre decisiones funcionales cerradas sin causa técnica específica; tampoco constituye aprobación de cambios de código, Supabase, migraciones o Producción.
+
+**Cadena de evidencia exigida:** contrato v1.0 íntegro → diagnóstico de brechas versionado → autorización por bloques → implementación y pruebas → evidencia de aceptación **QT-01…QT-16** → decisión de publicación. Registrar enlaces/commits/runs cuando existan; no declarar realizados los pasos pendientes.
 
 ## Inversión y gastos del proyecto — registro inicial
 **Origen:** conversación del Proyecto «Registrar gastos de inversión», iniciada en septiembre de 2026; ampliada con gasto OpenAI en noviembre. **Responsable:** 00 / registro de inversión. **Estado:** registro histórico confirmado por el usuario; comprobantes, cotizaciones y posibles gastos adicionales pendientes de conciliación. Esta sección conserva las monedas originales: no sumar ARS y USD entre sí ni asignar un equivalente sin fecha, tipo de cambio y criterio explícitos.
