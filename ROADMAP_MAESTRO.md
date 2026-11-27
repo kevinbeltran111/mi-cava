@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 3.1 — recuperación retrospectiva parcial de Etapas 1–4 · **Fecha de corte:** 2026-11-27 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 3.2 — diagnóstico de conciliación Site ↔ Archivo Maestro · **Fecha de corte:** 2026-11-27 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -322,3 +322,43 @@ La plataforma contaba con una base funcional documentada en el estado de Producc
 3. Si aparece el plan/commits originales, contrastar títulos, fechas, pruebas, migraciones y pendientes con estas fichas y actualizar por evidencia.
 4. Conservar los IDs existentes y el detalle histórico de UX-P01…UX-P11 sin mezclar mejoras recientes con funcionalidades de las primeras etapas.
 5. El Centro de Proyecto debe recibir **solo una propuesta de actualización documental versionada**, nunca una sobreescritura directa ni una sincronización presumida. Mantener separados el registro del Site y este archivo GitHub.
+
+
+## Conciliación Site ↔ Archivo Maestro — diagnóstico de instantánea (27/11/2026)
+**Alcance: documental y de lectura.** Se inspeccionó el HTML de **vista previa** de «Mi Cava — Inversión y gastos» guardado en Library el 23/11/2026, **no** el estado actual de la base D1 alojada. Los datos de la vista previa contienen una instantánea importada, que puede diferir de los cambios posteriores en el Site en vivo; ninguna conclusión de este bloque autoriza una escritura en D1, el despliegue del Site ni sincronización automática.
+
+### Resultados contrastados
+- El HTML incluye **27 registros de pendientes/pins** con IDs estables: 22 entradas del registro central de pendientes (de UX-22 a TECH-01) más cinco pendientes residuales de 7.2 (QA-72-IOS, QA-72-RESEND, QA-72-WSL, OPS-72-RESTORE, GIT-72-CLEAN). La versión 3.1 contiene esos mismos identificadores de seguimiento: **no crear otros ni renumerar los existentes**.
+- La vista previa presenta **13 tarjetas** de roadmap; el archivo maestro actual ya documenta además «Etapa 7.5 — Otras puertas de ¿Qué tomo?» (sin implementación) y reconstruye descriptivamente Etapas 1–4. Son candidatos a **nuevas fichas de hitos/etapas**, no nuevos registros en el conjunto de 27 pins.
+- Los seis movimientos **INV-001…INV-006** de la vista previa coinciden nominalmente en moneda/importe con el registro oficial: ARS 17.749,46 y USD 54,99. El seguimiento de suscripciones debe seguir separado de pagos efectivos.
+- El HTML declara como fuente una revisión/commit anterior del Roadmap Maestro, mientras que el documento actual es v3.1 al inicio de este contraste. Por tanto **la copia importada no está actualizada a la documentación más reciente**.
+- Cambios documentales posteriores a la instantánea: Etapas 1–4 reconstruidas parcialmente con fuente retrospectiva, Etapa 7.5 planificada, TECH-01 parcialmente resuelto (baseline versionado), UX-P01…UX-P11 con evidencia del código y M01 con pago de arancel de búsqueda. **No importar con operación de reemplazo global.**
+- El HTML incluye lógica de conexión a rutas de API del Site (`/api/changes`, etc.), pero el archivo local de solo lectura no prueba acceso efectivo, despliegue ni persistencia D1. Verificaciones de instancia viva aún son requeridas.
+
+### Contrato de conciliación controlada (propuesta; NO implementado)
+**Registros clave y origen:**
+1. **Pendientes/pins**: clave `pin:<ID>` (ej. `pin:UX-P01`), estado original y cambios D1 con autor/fecha. Dato original del roadmap como baseline; ediciones manuales del Site son cambios de usuario a preservar.
+2. **Etapas/hitos**: clave `stage:<stage_key>` estable, independiente del título visible. Para Etapas 1–4 usar `stage:1`…`stage:4` con rótulos *descriptivos/provisionales*. Etapas 7.1–7.5 con claves independientes, sin colapsar en etapa 7.
+3. **Gastos realizados**: clave `expense:<INV-ID>`. **Suscripciones previstas**: clave `subscription:<provider-id>:<period>`, distinta de pago realizado; confirmar un período una sola vez y enlazar el INV creado.
+4. **Decisiones**: clave estable por decisión cuando se registre; no inventar una identidad nueva para afirmaciones indistinguibles de un pin o etapa ya existente. Distinguir decisión aprobada, idea, antecedente y propuesta de desarrollo.
+5. **Audit trail**: nunca eliminar ni reescribir entradas históricas; las conciliaciones producen eventos nuevos con campo, anterior/nuevo, fuente y usuario responsable.
+ 
+**Control de versiones por fila:** `source_ref` (GitHub/archivo/rama), `source_version` (3.2 o posterior), `source_commit_sha` íntegro, `base_record_fingerprint` y `last_site_revision` (o equivalente observable desde D1). La huella del dato base sirve para detectar cambios, **no** como permiso de sobrescribir cambios locales.
+
+**Algoritmo conceptual de tres vías:**
+- **Igual en base, GitHub y Site:** sin acción.
+- **Cambio solo en GitHub desde la base:** proponer actualización de campos documentales; aplicarla únicamente si la fila D1 no cambió y hay aprobación.
+- **Cambio solo en Site:** conservar D1, marcar propuesta pendiente de conciliación; no propagar automáticamente al repositorio.
+- **Cambios concurrentes en el mismo campo:** conflicto visible para revisión humana (valor base, GitHub, Site, fecha/autores); nunca elegir por «último guardado» ni por prioridad implícita.
+- **Nueva etapa documentada en GitHub:** proponer creación de ficha nueva, sin contarla como pin ni modificar los 27 IDs.
+- **Elemento presente en Site pero ausente en archivo:** preservar; investigar antes de eliminar o renumerar.
+- **Gastos y pagos:** importación idempotente por ID y, para suscripciones, período + proveedor. No sumar pagos previstos a totales efectivos.
+
+**Secuencia recomendada antes de tocar D1:**
+1. Desde el Site vivo, obtener **exportación de datos y de cambios** con IDs, valores actuales, revisiones, autor y fecha, y **copia de respaldo verificable**. La vista previa no sustituye el export real.
+2. Construir informe de diferencias en modo **solo lectura**: sin cambios / nuevas fichas / campos actualizables / divergencias de usuario / conflictos / sin evidencia suficiente.
+3. Presentar propuesta campo por campo y solicitar aprobación específica para aplicar.
+4. Aplicar en transacciones/revisiones condicionadas, preservando historial e IDs; comprobar 27 pins y seis gastos, y capacidad de reversión.
+5. Dejar un manifiesto auditable de conciliación con versión, commit, origen, cantidad de filas y conflictos. Mantener **desactivada** cualquier sincronización automática hasta aprobación específica.
+
+**Restricciones permanentes:** no leer ni copiar secretos ni datos privados de usuarios de la app; el Site gestiona información de proyecto, no Cavas individuales. No publicar el Site ni modificar la aplicación, Supabase, Vercel o producción por documentar este contrato. No reinterpretar un cierre histórico solo porque el estado de una tabla sea distinto.
