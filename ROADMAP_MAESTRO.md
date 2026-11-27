@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 3.0 — trazabilidad de etapas 1–4 y solicitud de fuentes originales · **Fecha de corte:** 2026-11-23 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 3.1 — recuperación retrospectiva parcial de Etapas 1–4 · **Fecha de corte:** 2026-11-27 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -275,11 +275,50 @@ La plataforma contaba con una base funcional documentada en el estado de Producc
 
 | Etapa | Nombre original | Objetivo aprobado | Evidencia de implementación | Cierre y fecha | Estado documental |
 |---|---|---|---|---|---|
-| 1 | No recuperado | No recuperado | Capacidades tempranas sin asignación formal | Sin corroborar | Fuente original requerida |
-| 2 | No recuperado | No recuperado | Capacidades tempranas sin asignación formal | Sin corroborar | Fuente original requerida |
-| 3 | No recuperado | No recuperado | Capacidades tempranas sin asignación formal | Sin corroborar | Fuente original requerida |
-| 4 | No recuperado | No recuperado | Capacidades tempranas sin asignación formal | Sin corroborar | Fuente original requerida |
+| 1 | No recuperado | No recuperado | Existencia de una app anterior a Etapa 2; alcance no atribuible | Sin corroborar | Fuente original requerida |
+| 2 | Título formal no recuperado; descriptivo: información del vino y stock | Ampliar datos de procedencia y cantidad de botellas (según informe retrospectivo) | Se reporta incorporación de `region`, `lugar`, `stock`, migración de vinos previos y cambios de UI | Implementación retrospectivamente reportada; fecha no consta | Parcialmente recuperada |
+| 3 | Título formal no recuperado; descriptivo: identificación fotográfica e IA | Identificar vinos desde etiqueta con revisión y guardado humanos (según informe retrospectivo) | Se reporta identificación asistida por Anthropic, campos propuestos, manejo de desconocidos y control humano | Implementación retrospectivamente reportada; pruebas originales y fecha no constan | Parcialmente recuperada |
+| 4 | Título formal no recuperado; descriptivo: búsqueda, filtros y ordenamiento | Facilitar consulta de vinos propios (según informe retrospectivo) | Se reportan búsqueda por campos, filtros combinables, órdenes, conteo y limpieza; conformidad del usuario | Validación funcional reportada retrospectivamente; fecha no consta | Parcialmente recuperada |
 
 **Solicitud dirigida:** recuperar de las conversaciones o documentos originales los nombres, objetivos, decisiones, cambios realizados, fechas y evidencias de cierre de Etapas 1–4. Diferenciar literalmente fuente de interpretación, reconocer lo no recuperable y no inventar contenido. No ejecutar cambios en código, GitHub o Site durante la extracción.
 
 **Próximo paso en conversación 00:** contrastar el informe histórico con documentación y commits, completar las fichas, conciliar IDs sin duplicación y preparar actualización posterior del Site con control de versión.
+
+## Informe histórico adicional — extracción de conversación Etapa 5 (27/11/2026)
+**Origen y jerarquía:** el usuario aportó «INFORME DE RECUPERACIÓN HISTÓRICA — ETAPAS 1 A 4», elaborado desde una conversación concentrada principalmente en Etapa 5. Contiene referencias retrospectivas, **no transcripciones ni documentación primaria completa** de las cuatro primeras etapas. Por ello se registra como fuente histórica secundaria, con atribución y límites explícitos. Ningún título descriptivo siguiente equivale a denominación oficial ni se asignan fechas o commits originales que no consten.
+
+### Etapa 1 — Base inicial (denominación meramente descriptiva)
+- **Único dato recuperable:** existía una aplicación previa a Etapa 2.
+- **No demostrado:** nombre, alcance inicial, tecnología introducida específicamente entonces, criterios de aceptación, pruebas, fecha de cierre, decisiones ni pendientes originales.
+- **Tratamiento:** ficha histórica abierta por falta de fuentes, sin atribuir funciones actuales a esta etapa.
+
+### Etapa 2 — Datos del vino y stock (descripción retrospectiva)
+- **Objetivo reportado:** incorporar procedencia y cantidad de botellas.
+- **Implementación reportada:** `region`, `lugar`, `stock`; validación de stock entero no negativo; migración de vinos preexistentes; actualización de formularios y tarjetas.
+- **Evidencia y límites:** la extracción de conversación presenta estos resultados como implementados, pero no adjunta migración original, commit, pruebas ni acta. No asignar la posterior separación de `wine_privado` o la acción «Abrir» a esta etapa.
+- **Estado documental:** implementación reportada como completada; cierre formal/fecha pendientes de fuente primaria.
+
+### Etapa 3 — Identificación mediante fotografía e IA (descripción retrospectiva)
+- **Objetivo reportado:** proponer datos de vino desde una foto y permitir su revisión.
+- **Flujo:** foto → identificación IA → revisión humana → guardado; **la IA no guarda ni define stock automáticamente**.
+- **Campos reportados:** nombre, bodega, varietal, añada, región/lugar, precio cuando figure impreso, maridaje, notas técnicas, confianza y advertencia; valores desconocidos pueden ser `null`. La extracción indica que notas técnicas no se persistían y confianza no se mostraba, sin afirmar que fueron descartes deliberados.
+- **Evidencia y límites:** implementación reportada; no se recuperan tasa de aciertos, pruebas, commits, fecha de cierre o evidencia de carga por galería en esta etapa. No atribuir mejoras posteriores de UX a la versión original.
+
+### Etapa 4 — Búsqueda, filtros y ordenamiento (descripción retrospectiva)
+- **Objetivo reportado:** facilitar búsqueda de vinos propios y ordenar la biblioteca.
+- **Implementación reportada:** búsqueda textual por nombre, bodega, varietal, región, lugar y añada; filtros combinables por región, lugar, bodega, varietal, añada y stock; orden por nombre A–Z/Z–A, precio ascendente/descendente y stock descendente, junto con opciones preexistentes no detalladas; contador de resultados y limpieza de filtros.
+- **Validación:** el informe señala conformidad expresa del usuario con su funcionamiento; no se dispone de test cases, commit original ni fecha.
+- **Distinción temporal esencial:** «con stock/sin stock» no equivale a los actuales «Tengo/Tomé». La semántica de `Tomé` basada en consumos se consolidó en Etapa 5. El filtro específico de Favoritos también es evolución posterior, aunque el dato pudiera existir antes.
+
+### Decisiones transversales sin atribución temporal comprobada
+- **Biblioteca personal y evolución:** priorizar valor personal y luego inteligencia y Descubrir; sin inferir que esa formulación ya existía en Etapa 1.
+- **Arquitectura:** React/Vite, Supabase, Vercel, Storage, Auth y API de Anthropic, según descripción retrospectiva. No asignar adopción de cada componente a una etapa sin evidencia.
+- **Privacidad:** separación entre identidad del vino (`wines`) y datos privados (`wine_privado`); modelo consolidado ADMIN/EDITOR/VIEWER. No atribuirlo automáticamente a Etapas 1–4.
+- **Metodología:** decisiones funcionales con usuario → prompts Claude → cambios → validaciones → pruebas del usuario → cierre documental. Un incidente de recuperación del archivo `App.jsx` corresponde a Etapa 5, **no** a Etapas 1–4.
+
+### Conciliaciones y prioridades posteriores
+1. La Etapa 1 continúa siendo el vacío histórico principal: recuperar plan original si existe, pero no bloquear la documentación actual.
+2. Las Etapas 2–4 ahora tienen fichas descriptivas sustentadas en **testimonio retrospectivo**, no actas definitivas. No elevar su certeza sin fuentes adicionales.
+3. Si aparece el plan/commits originales, contrastar títulos, fechas, pruebas, migraciones y pendientes con estas fichas y actualizar por evidencia.
+4. Conservar los IDs existentes y el detalle histórico de UX-P01…UX-P11 sin mezclar mejoras recientes con funcionalidades de las primeras etapas.
+5. El Centro de Proyecto debe recibir **solo una propuesta de actualización documental versionada**, nunca una sobreescritura directa ni una sincronización presumida. Mantener separados el registro del Site y este archivo GitHub.
