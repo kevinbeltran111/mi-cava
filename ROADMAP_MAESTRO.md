@@ -1,5 +1,5 @@
 # Mi Cava — Roadmap Maestro
-**Versión:** 2.9 — conciliación de UX-P01 a UX-P11 · **Fecha de corte:** 2026-11-23 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
+**Versión:** 3.0 — trazabilidad de etapas 1–4 y solicitud de fuentes originales · **Fecha de corte:** 2026-11-23 · **Responsable de decisiones:** conversación ChatGPT `00 — Roadmap y decisiones de producto`
 
 > Este archivo es un registro de producto y pendientes, no una autorización de implementación. Toda modificación de código, infraestructura, seguridad, datos o despliegue requiere análisis y aprobación separados. La información histórica está en conciliación: «por verificar» no significa «pendiente confirmado».
 
@@ -266,3 +266,20 @@ Recuperar el mapa formal de etapas 1–4 de sus registros originales; después, 
 **Precaución adicional:** la evidencia leída de la interfaz de alta muestra que la carga manual solo aparece al fallar la IA; esto es una decisión UX potencialmente relevante para accesibilidad y conexiones limitadas, no una autorización para cambiarla. Revisar con criterio del producto antes de emitir instrucciones de implementación.
 
 **Próximo contraste prioritario:** probar en la beta actual los caminos concretos de foto, regreso, revisión y varios vinos, y recuperar cierres comunicados en conversación 03, si están disponibles. Un resultado satisfactorio puede convertir «implementado» en «cerrado», con fecha y evidencia. Mantener separado este trabajo del desarrollo activo de la Etapa 7.4.
+
+## Etapas 1–4 — reconstrucción documental, sin asignaciones artificiales (27/11/2026)
+**Alcance de investigación:** búsqueda de antecedentes personales disponibles, consultas de archivos del Proyecto/Library, revisión de `README.md` y `supabase/README.md` en GitHub, y búsqueda de commits con las expresiones «Etapa 1», «Etapa 2», «Etapa 3», «Etapa 4». **Resultado:** no se obtuvo una fuente directa que defina el plan original y su división formal en las cuatro etapas. Las coincidencias de texto en commits de subetapas 7.x no demuestran nombres de las etapas históricas iniciales.
+
+### Evidencia positiva anterior a Etapa 5
+La plataforma contaba con una base funcional documentada en el estado de Producción al 10/10/2026: catálogo web, cuentas e invitaciones por magic link, roles, integración Supabase/Vercel, identificación de vino por foto con revisión humana, biblioteca individual, datos privados de stock/precio/favorito, búsqueda y filtros. **No se asigna ninguna funcionalidad a una Etapa 1–4 sin el plan original**. Referencias: `README.md`, `supabase/README.md` y baseline integrado mediante PR #1 (`d79a0f2`), que reproduce un estado de Producción, no una cronología completa.
+
+| Etapa | Nombre original | Objetivo aprobado | Evidencia de implementación | Cierre y fecha | Estado documental |
+|---|---|---|---|---|---|
+| 1 | No recuperado | No recuperado | Capacidades tempranas sin asignación formal | Sin corroborar | Fuente original requerida |
+| 2 | No recuperado | No recuperado | Capacidades tempranas sin asignación formal | Sin corroborar | Fuente original requerida |
+| 3 | No recuperado | No recuperado | Capacidades tempranas sin asignación formal | Sin corroborar | Fuente original requerida |
+| 4 | No recuperado | No recuperado | Capacidades tempranas sin asignación formal | Sin corroborar | Fuente original requerida |
+
+**Solicitud dirigida:** recuperar de las conversaciones o documentos originales los nombres, objetivos, decisiones, cambios realizados, fechas y evidencias de cierre de Etapas 1–4. Diferenciar literalmente fuente de interpretación, reconocer lo no recuperable y no inventar contenido. No ejecutar cambios en código, GitHub o Site durante la extracción.
+
+**Próximo paso en conversación 00:** contrastar el informe histórico con documentación y commits, completar las fichas, conciliar IDs sin duplicación y preparar actualización posterior del Site con control de versión.
